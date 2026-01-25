@@ -7,7 +7,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('api', '0001_initial'),
+        ('flat_management', '0001_initial'),
     ]
 
     operations = [
@@ -55,6 +55,6 @@ class Migration(migrations.Migration):
         migrations.AddField(
             model_name='layout',
             name='flat',
-            field=models.OneToOneField(blank=True, help_text='Powiązane mieszkanie', null=True, on_delete=django.db.models.deletion.CASCADE, related_name='layout', to='api.flat'),
+            field=models.OneToOneField(blank=True, help_text='Powiązane mieszkanie', null=True, on_delete=django.db.models.deletion.CASCADE, related_name='layout', to='flat_management.flat'),
         ),
     ]
