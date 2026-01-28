@@ -19,6 +19,8 @@ export default defineConfig(({ mode }) => {
 
   return {
     base: isProd ? PROD_BASE : DEV_BASE,
+    // Load .env from project root (parent directory)
+    envDir: '..',
     plugins: [
       VueRouter({
         dts: "src/typed-router.d.ts",
@@ -65,6 +67,7 @@ export default defineConfig(({ mode }) => {
     optimizeDeps: {
       // zachowujemy oba: noDiscovery z nowszego podejścia oraz exclude dla unplugin-vue-router
       noDiscovery: true,
+      include: ['leaflet'],
       exclude: [
         "vue-router",
         "unplugin-vue-router/runtime",

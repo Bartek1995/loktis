@@ -1,328 +1,168 @@
-# FloorPlan Ergonomics
+# 🏠 Analizator Ogłoszeń Nieruchomości
 
-🏠 **2D floor plan editor with ergonomic analysis** — Design floor layouts and analyze walkability, room comfort, and traffic flow.
+Aplikacja do szybkiej analizy ogłoszeń mieszkaniowych z serwisów **Otodom** i **OLX** z oceną okolicy w oparciu o OpenStreetMap.
 
-[![Django](https://img.shields.io/badge/Django-5.2.10-green)](https://www.djangoproject.com/)
-[![Vue](https://img.shields.io/badge/Vue-3.5.24-green)](https://vuejs.org/)
-[![Tailwind](https://img.shields.io/badge/Tailwind-v4-blue)](https://tailwindcss.com/)
-[![PrimeVue](https://img.shields.io/badge/PrimeVue-4.x-purple)](https://primevue.org/)
-[![License](https://img.shields.io/badge/License-MIT-blue)](#license)
+![Vue.js](https://img.shields.io/badge/Vue.js-3.x-4FC08D?logo=vuedotjs)
+![Django](https://img.shields.io/badge/Django-5.2-092E20?logo=django)
+![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6?logo=typescript)
+![License](https://img.shields.io/badge/License-MIT-blue)
 
----
+## ✨ Funkcjonalności
 
-## 🎯 Features
+- **📊 Parsowanie ogłoszeń** - automatyczne pobieranie danych z Otodom i OLX (tytuł, cena, metraż, pokoje, piętro, lokalizacja, zdjęcia)
+- **🗺️ Analiza okolicy** - integracja z OpenStreetMap/Overpass API dla POI w konfigurowalnym promieniu (250-1000m)
+- **📈 Scoring okolicy** - automatyczna ocena infrastruktury z podziałem na kategorie:
+  - 🛒 Sklepy | 🚌 Transport | 🎓 Edukacja | 🏥 Zdrowie | 🌳 Rekreacja | 🍽️ Gastronomia | 🏦 Finanse
+- **🔇 Quiet Score** - ocena poziomu ciszy/hałasu na podstawie obecności głośnych obiektów
+- **🗺️ Interaktywna mapa** - Leaflet z kolorowymi markerami POI i radius overlay
+- **⚡ Streaming w czasie rzeczywistym** - aktualizacje statusu podczas analizy (NDJSON)
+- **📝 Raport z analizy** - TL;DR (3 plusy + 3 ryzyka), szczegóły ogłoszenia, mapa POI
 
-### ✅ MVP (Current)
-- 📐 **Floor Plan Editor** — Draw walls, furniture, doors in 2D SVG canvas
-- 🎨 **Interactive UI** — Mode selector (Select/Wall/Object/Door)
-- 💾 **Save/Load** — REST API backend with SQLite
-- 📊 **Grid System** — 5cm grid rasterization for ergonomic analysis
-- 🌙 **Dark Mode** — Full theme support
+## 🏗️ Architektura
 
-### 🔜 Coming Soon
-- 🚶 **Movement Analysis** — Calculate walkability paths (BFS algorithm)
-- 🔴 **Collision Detection** — Detect narrow passages and blocked areas
-- 📋 **Furniture Templates** — Prebuilt sofa, bed, table, desk objects
-- 📈 **Statistics** — Room capacity, traffic flow metrics
-- 🎯 **Ergonomic Checks** — Natural light access, ventilation analysis
+### Backend (Django 5.2 + DRF)
 
----
+```
+backend/
+├── listing_analyzer/
+│   ├── providers/           # Parsery ogłoszeń
+│   │   ├── base.py          # Bazowy provider
+│   │   ├── otodom.py        # Parser Otodom
+│   │   ├── olx.py           # Parser OLX
+│   │   └── registry.py      # Rejestr providerów
+│   ├── geo/                 # Analiza geograficzna
+│   │   ├── overpass_client.py   # Klient Overpass API
+│   │   └── poi_analyzer.py      # Scoring okolicy + Quiet Score
+│   ├── models.py            # Model AnalysisResult
+│   ├── views.py             # Endpointy API (w tym streaming)
+│   ├── services.py          # Główny serwis analizy
+│   ├── report_builder.py    # Budowanie raportów
+│   ├── cache.py             # In-memory cache TTL
+│   ├── rate_limiter.py      # Rate limiting
+│   └── urls.py              # Routing
+└── project_config/
+    ├── settings.py
+    └── urls.py
+```
 
-## 🚀 Quick Start
+### Frontend (Vue 3 + TypeScript + PrimeVue + Leaflet)
 
-### Prerequisites
-- **Python 3.10+** (for backend)
-- **Node.js 18+** (for frontend)
-- **Git**
+```
+frontend/src/
+├── api/
+│   └── analyzerApi.ts       # Klient API + streaming
+├── views/
+│   └── analyzer/
+│       ├── LandingView.vue  # Strona główna z formularzem + radius toggle
+│       └── ReportView.vue   # Wyświetlanie raportu + mapa Leaflet
+├── router/
+│   └── index.ts
+└── App.vue
+```
 
-### Backend Setup (Django 5.2)
+## 🚀 Uruchomienie
 
-```bash
+### Backend
+
+```powershell
 cd backend
-python -m venv venv
 
-# Windows
-venv\Scripts\activate
+# Aktywuj venv
+.\venv\Scripts\Activate.ps1
 
-# macOS/Linux
-source venv/bin/activate
-
+# Zainstaluj zależności
 pip install -r requirements.txt
+
+# Migracje
+python manage.py makemigrations listing_analyzer
 python manage.py migrate
+
+# Uruchom serwer
 python manage.py runserver 0.0.0.0:8000
 ```
 
-✅ API available at: `http://localhost:8000/api/layouts/`
+### Frontend
 
-### Frontend Setup (Vue 3 + Tailwind v4)
-
-```bash
+```powershell
 cd frontend
+
+# Zainstaluj zależności
 npm install
+
+# Uruchom dev server
 npm run dev
 ```
 
-✅ App available at: `http://localhost:5173`
-
----
-
-## 📋 Project Structure
-
-```
-floorplan-ergonomics/
-├── .github/
-│   └── copilot-instructions.md  # AI assistant instructions
-│
-├── backend/                      # Django REST API
-│   ├── project_config/
-│   │   ├── settings.py          # Django configuration (CORS, DRF)
-│   │   ├── urls.py              # API routing
-│   │   ├── wsgi.py
-│   │   └── asgi.py
-│   ├── api/                     # Main app (layouts CRUD)
-│   │   ├── models.py            # Layout model (JSONField)
-│   │   ├── serializers.py       # DRF serializers
-│   │   ├── views.py             # LayoutViewSet
-│   │   ├── urls.py              # API endpoints
-│   │   ├── migrations/
-│   │   └── tests.py
-│   ├── manage.py
-│   ├── requirements.txt          # Python dependencies
-│   └── db.sqlite3               # SQLite database
-│
-├── frontend/                     # Vue 3 + TypeScript SPA
-│   ├── src/
-│   │   ├── main.ts              # Vue app bootstrap
-│   │   ├── App.vue              # Root component
-│   │   ├── style.css            # Tailwind imports
-│   │   ├─── api/
-│   │   │   └── layoutApi.ts     # Axios HTTP client
-│   │   ├── types/
-│   │   │   └── layout.ts        # TypeScript interfaces
-│   │   ├── stores/
-│   │   │   └── layoutStore.ts   # Pinia state management
-│   │   ├── components/
-│   │   │   ├── Toolbar.vue      # Top bar (Save, New, Dark mode)
-│   │   │   ├── Sidebar.vue      # Left panel (modes, layouts list)
-│   │   │   └── FloorCanvas.vue  # SVG editor
-│   │   └── assets/
-│   ├── vite.config.ts           # Vite + @tailwindcss/vite config
-│   ├── tailwind.config.ts       # Tailwind v4 configuration
-│   ├── tsconfig.json
-│   ├── package.json
-│   └── index.html
-│
-├── .gitignore
-├── .git/
-├── README.md
-├── floorplan-ergonomics.code-workspace
-└── LICENSE
-
-```
-
----
-
-## 🛠 Tech Stack
-
-### Backend
-| Technology | Version | Purpose |
-|-----------|---------|---------|
-| **Django** | 5.2.10 | Web framework |
-| **Django REST Framework** | 3.14.0 | REST API |
-| **Django CORS Headers** | 4.3.1 | CORS support |
-| **SQLite** | - | Development database |
-| **PostgreSQL** | - | Production database |
-| **Python** | 3.10+ | Language |
-
-### Frontend
-| Technology | Version | Purpose |
-|-----------|---------|---------|
-| **Vue** | 3.5.24 | UI framework |
-| **TypeScript** | ~5.9.3 | Type safety |
-| **Vite** | 7.3.1 | Build tool |
-| **Tailwind CSS** | v4 | Utility-first CSS |
-| **@tailwindcss/vite** | latest | Vite plugin |
-| **PrimeVue** | 4.x | Component library |
-| **Pinia** | latest | State management |
-| **Axios** | latest | HTTP client |
-
----
+**Aplikacja dostępna pod:**
+- 🌐 Frontend: http://localhost:5173
+- 🔌 Backend API: http://localhost:8000/api/
 
 ## 📡 API Endpoints
 
-### Layouts
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/layouts/` | List all layouts |
-| POST | `/api/layouts/` | Create new layout |
-| GET | `/api/layouts/{id}/` | Get layout details |
-| PUT | `/api/layouts/{id}/` | Update layout |
-| DELETE | `/api/layouts/{id}/` | Delete layout |
+| Metoda | Endpoint | Opis |
+|--------|----------|------|
+| `POST` | `/api/analyze/` | Analizuje ogłoszenie (streaming NDJSON) |
+| `POST` | `/api/validate-url/` | Waliduje URL przed analizą |
+| `GET` | `/api/providers/` | Lista obsługiwanych serwisów |
+| `GET` | `/api/history/` | Historia analiz |
+| `GET` | `/api/history/{id}/` | Szczegóły analizy |
+| `GET` | `/api/history/{id}/report/` | Pełny raport z historii |
+| `GET` | `/api/history/recent/` | Ostatnie 10 analiz |
 
-### Example Request
+### Przykład request do analizy
 
-```bash
-# Create layout
-curl -X POST http://localhost:8000/api/layouts/ \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "Living Room",
-    "layout_data": {
-      "width_cm": 500,
-      "height_cm": 400,
-      "walls": [{"x1": 0, "y1": 0, "x2": 500, "y2": 0}],
-      "objects": [],
-      "doors": []
-    }
-  }'
+```json
+POST /api/analyze/
+{
+  "url": "https://www.otodom.pl/pl/oferta/...",
+  "radius": 500,
+  "use_cache": true
+}
 ```
 
----
+### Streaming response (NDJSON)
 
-## 🔧 Development
-
-### Running Both Servers (2 Terminals)
-
-**Terminal 1 - Backend:**
-```powershell
-cd backend
-.\venv\Scripts\python.exe manage.py runserver 0.0.0.0:8000
+```json
+{"status": "validating", "message": "Walidacja URL..."}
+{"status": "parsing", "message": "Pobieranie ogłoszenia..."}
+{"status": "map", "message": "Analiza mapy (promień 500m)..."}
+{"status": "calculating", "message": "Obliczanie wyników..."}
+{"status": "generating", "message": "Generowanie raportu końcowego..."}
+{"status": "complete", "result": {...}}
 ```
 
-**Terminal 2 - Frontend:**
-```powershell
-cd frontend
-npm run dev
-```
+## ⚙️ Konfiguracja
 
-### Environment Variables
+### Rate Limiting
+- 5 requestów / minuta
+- 30 requestów / godzina
 
-Create `.env` in `backend/`:
-```env
-DEBUG=True
-SECRET_KEY=your-secret-key-here
-ALLOWED_HOSTS=localhost,127.0.0.1
-CORS_ALLOWED_ORIGINS=http://localhost:5173,http://localhost:5174
-```
+### Cache TTL
+- Wyniki parsowania: **1 godzina**
+- Dane z Overpass API: **24 godziny**
 
-### Database Migrations
+### Promień analizy
+- Minimum: 250m
+- Maximum: 1000m
+- Domyślnie: 500m
 
-```bash
-cd backend
-python manage.py makemigrations
-python manage.py migrate
-```
+## 📦 Technologie
 
-### Creating Admin User
+| Warstwa | Technologia |
+|---------|-------------|
+| Frontend | Vue 3, TypeScript, PrimeVue, Tailwind CSS, Leaflet |
+| Backend | Django 5.2, Django REST Framework, BeautifulSoup4 |
+| Mapy | Leaflet, OpenStreetMap, Overpass API |
+| Build | Vite, npm |
 
-```bash
-cd backend
-python manage.py createsuperuser
-# Then visit http://localhost:8000/admin/
-```
+## ⚠️ Uwagi
 
----
+- Scraping może być niestabilny - serwisy mogą zmieniać strukturę HTML
+- Aplikacja zwraca partial result nawet gdy niektóre dane się nie pobiorą
+- Dane z OpenStreetMap mogą być niekompletne dla niektórych lokalizacji
+- Analiza ma charakter poglądowy i nie zastępuje własnej weryfikacji
+- Quiet Score bazuje na obecności potencjalnie głośnych obiektów (bary, kluby, główne drogi)
 
-## 🧪 Testing
+## 📄 Licencja
 
-### Backend Tests
-```bash
-cd backend
-python manage.py test api/
-```
-
-### Frontend Tests (future)
-```bash
-cd frontend
-npm run test
-```
-
----
-
-## 📦 Building for Production
-
-### Backend
-```bash
-cd backend
-pip install gunicorn
-gunicorn project_config.wsgi:application --bind 0.0.0.0:8000
-```
-
-### Frontend
-```bash
-cd frontend
-npm run build
-# Output: dist/
-```
-
----
-
-## 🚢 Deployment
-
-### Railway (Recommended)
-1. Push to GitHub
-2. Connect repository to Railway
-3. Add buildpacks: Python, Node.js
-4. Set environment variables
-5. Deploy!
-
-### Docker (Alternative)
-```bash
-docker-compose up -d
-```
-
----
-
-## 📚 Documentation
-
-- **Backend** → See `backend/README.md` (if exists)
-- **Frontend** → See `frontend/README.md` (if exists)
-- **AI Instructions** → See `.github/copilot-instructions.md`
-
----
-
-## 🤝 Contributing
-
-1. Fork the repository
-2. Create feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit changes (`git commit -m 'Add amazing feature'`)
-4. Push to branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
-
----
-
-## 📝 License
-
-This project is licensed under the MIT License — see [LICENSE](LICENSE) file for details.
-
----
-
-## 👨‍💻 Author
-
-**FloorPlan Ergonomics** — Created with ❤️ for better living spaces
-
----
-
-## 🔗 Links
-
-- [Django Documentation](https://docs.djangoproject.com/)
-- [Vue 3 Guide](https://vuejs.org/)
-- [Tailwind CSS v4](https://tailwindcss.com/)
-- [PrimeVue Components](https://primevue.org/)
-
----
-
-## ❓ FAQ
-
-**Q: Can I use this on macOS/Linux?**  
-A: Yes! All commands work cross-platform. Use `python3` and `source venv/bin/activate` on Unix systems.
-
-**Q: How do I reset the database?**  
-A: Delete `backend/db.sqlite3` and run `python manage.py migrate`
-
-**Q: Can I run this without Docker?**  
-A: Yes! Follow the Quick Start section — no Docker required.
-
----
-
-**Last Updated:** January 23, 2026
+MIT License

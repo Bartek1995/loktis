@@ -34,15 +34,15 @@ venv.bak/
 backend/venv/
 
 # Django
-*.log
-local_settings.py
-db.sqlite3
-db.sqlite3-journal
-/staticfiles/
-/media/
-.env
-.env.local
-.env.*.local
+backend/*.log
+backend/local_settings.py
+backend/db.sqlite3
+backend/db.sqlite3-journal
+backend/staticfiles/
+backend/media/*
+backend/.env
+backend/.env.local
+backend/.env.*.local
 
 # IDE
 .vscode/
@@ -117,6 +117,7 @@ docker-compose.override.yml
 # Environment specific
 .env.production
 .env.staging
+.env
 secrets/
 config/local/
 

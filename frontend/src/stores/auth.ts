@@ -1,86 +1,65 @@
-// src/stores/auth.ts
+/**
+ * Auth Store - tymczasowo nieaktywny (przygotowany na przyszłość)
+ * 
+ * TODO: Aktywować gdy będzie potrzebna autoryzacja użytkowników
+ */
 import { defineStore } from 'pinia';
-import api from '@/api/apiService';
-import { useLocalStorage } from '@vueuse/core';
-import axios from 'axios';
+import { ref, computed } from 'vue';
 
-interface User {
-    id: number;
-    email: string;
-    first_name: string;
-    last_name: string;
-    is_active: boolean;
-    avatar: string;
-    username: string;
-}
+export const useAuthStore = defineStore('auth', () => {
+  // State
+  const isAuthReady = ref(true); // Dla MVP zawsze ready (brak auth)
+  const isLoggedIn = ref(false);
+  const user = ref<{ id: number; email: string; name: string } | null>(null);
+  const accessToken = ref<string | null>(null);
 
-export const useAuthStore = defineStore('auth', {
-    state: () => ({
-        user: {
-            id: 1,
-            email: 'demo@example.com',
-            first_name: 'Demo',
-            last_name: 'User',
-            is_active: true,
-            avatar: '',
-            username: 'demouser'
-        } as User | null,
-        accessToken: useLocalStorage<string | null>('access_token', 'demo_token'),
-        refreshToken: useLocalStorage<string | null>('refresh_token', 'demo_refresh'),
-        isAuthReady: false
-    }),
-    getters: {
-        isLoggedIn: () => true // Tymczasowo: zawsze zalogowany
-    },
-    actions: {
-        async login(email: string, password: string) {
-            const res = await api.post('v1/auth/token/', { email, password });
+  // Getters
+  const userName = computed(() => user.value?.name || 'Gość');
+  const userEmail = computed(() => user.value?.email || '');
 
-            this.accessToken = res.data.access;
-            this.refreshToken = res.data.refresh;
+  // Actions
+  async function initialize() {
+    // MVP: brak autoryzacji, od razu ready
+    isAuthReady.value = true;
+    
+    // TODO: Odkomentuj gdy auth będzie aktywne
+    // const token = localStorage.getItem('access_token');
+    // if (token) {
+    //   accessToken.value = token;
+    //   await fetchUser();
+    // }
+  }
 
-            api.defaults.headers.common['Authorization'] = `Bearer ${res.data.access}`;
-            await this.fetchUser();
-        },
-        async fetchUser() {
-            try {
-                const res = await api.get('v1/auth/users/me/');
-                this.user = res.data;
-            } catch (error) {
-                console.error('Failed to fetch user:', error);
-                throw error;
-            }
-        },
-        logout() {
-            this.accessToken = null;
-            this.refreshToken = null;
-            this.user = null;
-            delete api.defaults.headers.common['Authorization'];
-        },
-        async tryRefreshToken() {
-            if (!this.refreshToken) {
-                return false;
-            }
-            try {
-                const { data } = await axios.post('http://localhost:8000/api/v1/auth/token/refresh/', {
-                    refresh: this.refreshToken
-                });
+  async function login(email: string, password: string): Promise<boolean> {
+    // TODO: Implementacja logowania
+    console.warn('Auth nieaktywne - login pominięty');
+    return false;
+  }
 
-                this.accessToken = data.access;
-                if (data.refresh) {
-                    this.refreshToken = data.refresh;
-                }
-                api.defaults.headers.common['Authorization'] = `Bearer ${this.accessToken}`;
+  async function logout() {
+    user.value = null;
+    accessToken.value = null;
+    isLoggedIn.value = false;
+    localStorage.removeItem('access_token');
+  }
 
-                return true;
-            } catch {
-                this.logout();
-                return false;
-            }
-        },
-        async initialize() {
-            // Tymczasowo: pomiń inicjalizację autoryzacji
-            this.isAuthReady = true;
-        }
-    }
+  async function fetchUser() {
+    // TODO: Pobierz dane użytkownika z API
+  }
+
+  return {
+    // State
+    isAuthReady,
+    isLoggedIn,
+    user,
+    accessToken,
+    // Getters
+    userName,
+    userEmail,
+    // Actions
+    initialize,
+    login,
+    logout,
+    fetchUser,
+  };
 });

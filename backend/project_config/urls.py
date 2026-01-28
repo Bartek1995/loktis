@@ -18,16 +18,10 @@ from django.contrib import admin
 from django.urls import path, include
 from django.conf import settings
 from django.conf.urls.static import static
-from rest_framework.routers import DefaultRouter
-from flat_management.views import FlatViewSet, LayoutViewSet
-
-router = DefaultRouter()
-router.register(r'flats', FlatViewSet)
-router.register(r'layouts', LayoutViewSet)
 
 urlpatterns = [
     path('admin/', admin.site.urls),
-    path('api/', include(router.urls)),
+    path('api/', include('listing_analyzer.urls')),
     path('api-auth/', include('rest_framework.urls')),
 ]
 
