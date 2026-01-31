@@ -4,6 +4,7 @@ Widoki API dla analizy lokalizacji.
 import logging
 
 from django.http import StreamingHttpResponse
+from django.shortcuts import get_object_or_404
 from rest_framework import status
 from rest_framework.views import APIView
 from rest_framework.viewsets import ReadOnlyModelViewSet
@@ -182,4 +183,57 @@ class ProvidersView(APIView):
                 }
             ],
             'allowed_domains': domains,
+        })
+
+
+class ReportDetailView(APIView):
+    """
+    Publiczny endpoint do pobierania raportu po public_id.
+    
+    GET /api/report/{public_id}/
+    """
+    
+    def get(self, request, public_id):
+        """Zwraca pełny raport z bazy po public_id."""
+        analysis = get_object_or_404(LocationAnalysis, public_id=public_id)
+        
+        # Zwróć pełny raport z report_data lub zbuduj z pól
+        if analysis.report_data:
+            return Response(analysis.report_data)
+        
+        # Fallback - zbuduj z pól modelu
+        return Response({
+            'success': True,
+            'errors': analysis.parsing_errors or [],
+            'warnings': [],
+            'tldr': {
+                'pros': analysis.pros or [],
+                'cons': analysis.cons or [],
+            },
+            'listing': {
+                'url': analysis.url,
+                'title': analysis.title,
+                'address': analysis.address,
+                'price': float(analysis.price) if analysis.price else None,
+                'price_per_sqm': float(analysis.price_per_sqm) if analysis.price_per_sqm else None,
+                'area_sqm': analysis.area_sqm,
+                'rooms': analysis.rooms,
+                'floor': analysis.floor,
+                'description': analysis.description,
+                'images': analysis.images or [],
+                'latitude': analysis.latitude,
+                'longitude': analysis.longitude,
+                'has_precise_location': analysis.has_precise_location,
+            },
+            'neighborhood': {
+                'has_location': analysis.has_precise_location,
+                'score': analysis.neighborhood_score,
+                'summary': '',
+                'details': analysis.neighborhood_data or {},
+                'poi_stats': {},
+                'markers': [],
+            },
+            'checklist': analysis.checklist or [],
+            'limitations': [],
+            'public_id': analysis.public_id,
         })

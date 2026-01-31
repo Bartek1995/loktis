@@ -89,6 +89,7 @@ export interface AnalysisReport {
   neighborhood: NeighborhoodData;
   checklist: string[];
   limitations: string[];
+  public_id?: string; // Hash do publicznego URL
 }
 
 export interface ValidationResult {
@@ -314,6 +315,15 @@ export const analyzerApi = {
    */
   async getHistoryDetail(id: number): Promise<AnalysisReport> {
     const response = await apiClient.get(`/history/${id}/report/`);
+    return response.data;
+  },
+
+  /**
+   * Pobiera raport po publicznym ID (hash)
+   * Endpoint: GET /api/report/{public_id}/
+   */
+  async getReportByPublicId(publicId: string): Promise<AnalysisReport> {
+    const response = await apiClient.get<AnalysisReport>(`/report/${publicId}/`);
     return response.data;
   },
 };

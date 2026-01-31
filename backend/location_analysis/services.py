@@ -169,7 +169,22 @@ class AnalysisService:
                 all_pois=pois
             )
             
+            # Zapisz do bazy i pobierz public_id
+            saved_analysis = self._save_location_to_db(
+                lat=lat,
+                lon=lon,
+                listing=listing,
+                report=report,
+                radius=radius,
+                reference_url=reference_url
+            )
+            
             result = report.to_dict()
+            
+            # Dodaj public_id do wyniku
+            if saved_analysis:
+                result['public_id'] = saved_analysis.public_id
+            
             yield json.dumps({'status': 'complete', 'result': result}) + '\n'
             
         except Exception as e:
@@ -263,6 +278,65 @@ class AnalysisService:
                 }
             )
             
+            return result
+            
+        except Exception as e:
+            logger.warning(f"Nie udało się zapisać do bazy: {e}")
+            return None
+    
+    def _save_location_to_db(
+        self,
+        lat: float,
+        lon: float,
+        listing: PropertyData,
+        report: AnalysisReport,
+        radius: int = 500,
+        reference_url: str = None
+    ) -> Optional[LocationAnalysis]:
+        """Zapisuje wynik analizy lokalizacji do bazy danych."""
+        try:
+            # Generuj hash na podstawie lokalizacji
+            url_hash = LocationAnalysis.generate_hash(lat=lat, lon=lon)
+            url = reference_url or f"location://{lat},{lon}"
+            
+            # Dodaj public_id do report_data
+            report_dict = report.to_dict()
+            
+            result, created = LocationAnalysis.objects.update_or_create(
+                url_hash=url_hash,
+                defaults={
+                    'url': url,
+                    'title': listing.title or listing.location,
+                    'price': listing.price,
+                    'price_per_sqm': listing.price_per_sqm,
+                    'area_sqm': listing.area_sqm,
+                    'rooms': listing.rooms,
+                    'floor': listing.floor or '',
+                    'address': listing.location,
+                    'description': listing.description[:5000] if listing.description else '',
+                    'images': listing.images or [],
+                    'latitude': lat,
+                    'longitude': lon,
+                    'has_precise_location': True,
+                    'neighborhood_score': report.neighborhood_score,
+                    'neighborhood_data': report.neighborhood_details,
+                    'report_data': report_dict,
+                    'pros': report.pros,
+                    'cons': report.cons,
+                    'checklist': report.checklist,
+                    'source_provider': 'location',
+                    'analysis_radius': radius,
+                    'parsing_errors': listing.errors,
+                }
+            )
+            
+            # Dodaj public_id do report_data po zapisie
+            if result.public_id:
+                report_dict['public_id'] = result.public_id
+                result.report_data = report_dict
+                result.save(update_fields=['report_data'])
+            
+            logger.info(f"Zapisano analizę lokalizacji: {result.public_id}")
             return result
             
         except Exception as e:

@@ -25,6 +25,12 @@ const routes: Array<RouteRecordRaw> = [
         meta: { title: 'Raport analizy' }
     },
     {
+        path: '/r/:publicId',
+        name: 'report-public',
+        component: () => import('@/views/analyzer/ReportView.vue'),
+        meta: { title: 'Raport analizy' }
+    },
+    {
         path: '/history/:id',
         name: 'history-detail',
         component: () => import('@/views/analyzer/ReportView.vue'),

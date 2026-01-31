@@ -426,8 +426,18 @@ watch(selectedMapType, () => {
   }
 });
 
+// Copy public URL to clipboard
+function copyPublicUrl() {
+  if (report.value?.public_id) {
+    const publicUrl = `${window.location.origin}/r/${report.value.public_id}`;
+    navigator.clipboard.writeText(publicUrl);
+    // TODO: Show toast notification
+  }
+}
+
 // Load report
 onMounted(async () => {
+  // Case 1: From fresh analysis (via sessionStorage)
   if (route.query.fromAnalysis === 'true') {
     const storedReport = sessionStorage.getItem('lastReport');
     const storedUrl = sessionStorage.getItem('lastReportUrl');
@@ -437,6 +447,12 @@ onMounted(async () => {
         originalUrl.value = storedUrl || '';
         sessionStorage.removeItem('lastReport');
         sessionStorage.removeItem('lastReportUrl');
+        
+        // Redirect to public URL if available
+        if (report.value?.public_id) {
+          router.replace({ name: 'report-public', params: { publicId: report.value.public_id } });
+        }
+        
         nextTick(initMap);
         return;
       } catch (e) {
@@ -445,6 +461,22 @@ onMounted(async () => {
     }
   }
   
+  // Case 2: Public URL with public_id (hash)
+  const publicId = route.params.publicId;
+  if (publicId && typeof publicId === 'string') {
+    isLoading.value = true;
+    try {
+      report.value = await analyzerApi.getReportByPublicId(publicId);
+      nextTick(initMap);
+    } catch (e) {
+      error.value = 'Nie udało się pobrać raportu. Sprawdź czy link jest poprawny.';
+    } finally {
+      isLoading.value = false;
+    }
+    return;
+  }
+  
+  // Case 3: History detail by numeric ID (legacy)
   const id = route.params.id;
   if (id) {
     isLoading.value = true;
@@ -505,6 +537,15 @@ onMounted(async () => {
               </p>
             </div>
             <div class="flex gap-2 flex-shrink-0">
+              <button 
+                v-if="report!.public_id"
+                @click="copyPublicUrl"
+                class="px-4 py-2 rounded-xl border-2 border-emerald-200 text-emerald-600 font-medium hover:bg-emerald-50 transition-colors flex items-center gap-2"
+                title="Kopiuj link do raportu"
+              >
+                <i class="pi pi-share-alt"></i>
+                <span class="hidden sm:inline">Udostępnij</span>
+              </button>
               <button 
                 @click="openOriginalUrl"
                 class="px-4 py-2 rounded-xl border-2 border-slate-200 text-slate-600 font-medium hover:bg-slate-50 transition-colors flex items-center gap-2"

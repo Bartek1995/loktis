@@ -3,6 +3,7 @@ Model przechowujący wyniki analizy lokalizacji.
 """
 from django.db import models
 import hashlib
+import secrets
 
 
 class LocationAnalysis(models.Model):
@@ -10,6 +11,9 @@ class LocationAnalysis(models.Model):
     Model przechowujący wyniki analizy lokalizacji.
     Główna jednostka danych dla loktis.pl - analiza lokalizacji nieruchomości.
     """
+    # Publiczny identyfikator - hash do URL (auto-generowany)
+    public_id = models.CharField(max_length=32, unique=True, db_index=True, blank=True)
+    
     # Identyfikacja - URL opcjonalny (location-first model)
     url = models.URLField(max_length=2048, blank=True, db_index=True)
     url_hash = models.CharField(max_length=64, unique=True, db_index=True)
@@ -70,6 +74,25 @@ class LocationAnalysis(models.Model):
         return hashlib.sha256(normalized.encode()).hexdigest()
     
     @classmethod
+    def generate_public_id(cls) -> str:
+        """Generate unique public ID for shareable URLs."""
+        return secrets.token_urlsafe(16)[:24]  # 24 chars - short but unique
+    
+    @classmethod
     def generate_url_hash(cls, url: str) -> str:
         """Legacy method for URL-based hash."""
         return cls.generate_hash(url=url)
+    
+    def save(self, *args, **kwargs):
+        """Override save to auto-generate public_id if not set."""
+        if not self.public_id:
+            # Generate unique public_id
+            for _ in range(10):  # Max 10 attempts
+                new_id = self.generate_public_id()
+                if not LocationAnalysis.objects.filter(public_id=new_id).exists():
+                    self.public_id = new_id
+                    break
+            else:
+                # Fallback to longer token
+                self.public_id = secrets.token_urlsafe(24)[:32]
+        super().save(*args, **kwargs)
