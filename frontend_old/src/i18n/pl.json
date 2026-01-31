@@ -1,0 +1,100 @@
+{
+    "common": {
+        "loading": "Ładowanie...",
+        "error": "Wystąpił błąd",
+        "save": "Zapisz",
+        "cancel": "Anuluj",
+        "delete": "Usuń",
+        "edit": "Edytuj",
+        "create": "Utwórz",
+        "search": "Szukaj",
+        "yes": "Tak",
+        "no": "Nie"
+    },
+    "language_switcher": {
+        "title": "Wybierz język",
+        "english": "Angielski",
+        "polish": "Polski",
+        "german": "Niemiecki",
+        "french": "Francuski",
+        "spanish": "Hiszpański"
+    },
+    "form_login": {
+        "title": "Logowanie",
+        "button": "Zaloguj się",
+        "username": "Użytkownik",
+        "email": "Adres Email",
+        "password": "Hasło",
+        "hide_password": "Ukryj hasło",
+        "show_password": "Pokaż hasło",
+        "required_email": "Email jest wymagany",
+        "required_password": "Hasło jest wymagane"
+    },
+    "form": {
+        "save": "Zapisz",
+        "delete": "Usuń",
+        "required": "Pole jest wymagane",
+        "invalidEmail": "Niewłaściwy adres email",
+        "minLength": "Minimum długość to {length} znaków",
+        "maxLength": "Maximum długość to {length} znaków"
+    },
+    "login": {
+        "title": "Logowanie",
+        "button": "Zaloguj się",
+        "username": "Użytkownik",
+        "password": "Hasło",
+        "hide_password": "Ukryj hasło",
+        "show_password": "Pokaż hasło"
+    },
+    "user": {
+        "add_user": "Dodaj użytkownika",
+        "edit_user": "Edytuj użytkownika",
+        "delete_user": "Usuń użytkownika",
+
+        "add_user_succes": "Użytkownik został pomyślnie dodany",
+        "edit_user_succes": "Użytkownik został pomyślnie zaaktualizowany",
+        "delete_user_succes": "Użytkownik został pomyślnie usunięty",
+
+        "first_name": "Imię",
+        "last_name": "Nazwisko",
+        "email": "Email",
+        "groups": "Grupy",
+        "is_active": "Aktywny",
+        "last_login": "Ostatnie logowanie",
+        "date_joined": "Data dołączenia",
+
+        "first_name_validation": "Imię musi mieć co najmniej 2 znaki",
+        "last_name_validation": "Nazwisko musi mieć co najmniej 2 znaki",
+        "email_validation": "Podaj poprawny adres email",
+        "groups_validation": "Wybierz co najmniej jedną grupę",
+
+        "first_name_placeholder": "Podaj Imię",
+        "last_name_placeholder": "Podaj Nazwisko",
+        "email_placeholder": "Podaj Email",
+        "groups_placeholder": "Wybierz Grupy"
+    },
+    "datatable": {
+        "button_clear_filters": "Wyczyść",
+        "button_apply_filters": "Zastosuj",
+        "button_export": "Eksportuj",
+        "button_add": "Dodaj",
+        "button_edit": "Edytuj",
+        "button_delete": "Usuń",
+
+        "input_global_search": "Szukaj...",
+        "input_filter": "Filtruj...",
+        "input_search": "Szukaj",
+        "input_date": "Wybierz datę",
+        "input_date_time": "Wybierz datę i czas",
+        "input_multi_select": "Wybierz opcje",
+        "input_column_range": "Wybierz kolumny",
+
+        "message_success_add": "Rekord został pomyślnie dodany",
+
+        "pluralizeColumnOne": "Opcję",
+        "pluralizeColumnFew": "Opcje",
+        "pluralizeColumnMany": "Opcji",
+
+        "lack_of_data": "Brak danych do wyświetlenia"
+    }
+}

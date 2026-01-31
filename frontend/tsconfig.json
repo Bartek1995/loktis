@@ -1,22 +1,7 @@
 {
-    "compilerOptions": {
-        "noImplicitAny": false,
-        "target": "esnext",
-        "module": "esnext",
-        "moduleResolution": "Bundler",
-        "strict": true,
-        "jsx": "preserve",
-        "jsxFactory": "h",
-        "jsxFragmentFactory": "Fragment",
-        "types": ["vite/client"],
-        "esModuleInterop": true,
-        "skipLibCheck": true,
-        "forceConsistentCasingInFileNames": true,
-        "resolveJsonModule": true,
-        "baseUrl": ".",
-        "paths": {
-            "@/*": ["src/*"]
-        }
-    },
-    "include": ["src/**/*", "shims-vue.d.ts"]
+  "files": [],
+  "references": [
+    { "path": "./tsconfig.app.json" },
+    { "path": "./tsconfig.node.json" }
+  ]
 }

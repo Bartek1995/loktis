@@ -10,12 +10,10 @@
  */
 import { ref, computed } from 'vue';
 import { useRouter } from 'vue-router';
-import { useToast } from 'primevue/usetoast';
 import { analyzerApi, getErrorMessage, type HistoryItem } from '@/api/analyzerApi';
 import LocationPicker from '@/components/LocationPicker.vue';
 
 const router = useRouter();
-const toast = useToast();
 
 // State - location first approach
 const selectedLocation = ref<{ lat: number; lng: number; address: string } | null>(null);
@@ -31,6 +29,7 @@ const loadingProgress = ref(0);
 const recentAnalyses = ref<HistoryItem[]>([]);
 const isLoadingRecent = ref(false);
 const showAdvanced = ref(false);
+const errorMessage = ref('');
 
 const radiusOptions = [
   { label: '500m', value: 500 },
@@ -75,29 +74,36 @@ function clearLocation() {
 }
 
 function toggleFaq(index: number) {
-  faqItems.value[index].open = !faqItems.value[index].open;
+  const item = faqItems.value[index];
+  if (item) {
+    item.open = !item.open;
+  }
 }
 
 async function handleAnalyze() {
-  if (!canSubmit.value || !selectedLocation.value) return;
+  if (!canSubmit.value || !selectedLocation.value || price.value === null || areaSqm.value === null) return;
   
   isLoading.value = true;
   loadingStatus.value = 'Inicjalizacja...';
   loadingProgress.value = 10;
+  errorMessage.value = '';
   
   try {
     const report = await analyzerApi.analyzeLocationStream(
       selectedLocation.value.lat,
       selectedLocation.value.lng,
-      price.value!,
-      areaSqm.value!,
+      price.value,
+      areaSqm.value,
       selectedLocation.value.address,
       radius.value,
       referenceUrl.value || undefined,
       (event) => {
         if (event.message) {
           loadingStatus.value = event.message;
-          const step = loadingSteps.find(s => event.message?.includes(s.status.split('...')[0]));
+          const step = loadingSteps.find(s => {
+            const prefix = s.status.split('...')[0];
+            return prefix && event.message?.includes(prefix);
+          });
           if (step) loadingProgress.value = step.progress;
           else loadingProgress.value = Math.min(loadingProgress.value + 10, 95);
         }
@@ -119,12 +125,7 @@ async function handleAnalyze() {
     });
     
   } catch (error) {
-    toast.add({
-      severity: 'error',
-      summary: 'Błąd analizy',
-      detail: getErrorMessage(error),
-      life: 5000,
-    });
+    errorMessage.value = getErrorMessage(error);
   } finally {
     isLoading.value = false;
     loadingStatus.value = '';
@@ -271,6 +272,14 @@ loadRecentAnalyses();
         <div class="bg-white rounded-2xl shadow-xl p-6 md:p-8 border border-slate-100">
           <div class="flex flex-col gap-6">
             
+            <!-- Error Message -->
+            <div v-if="errorMessage" class="p-4 bg-red-50 border border-red-200 rounded-xl text-red-700">
+              <div class="flex items-center gap-2">
+                <i class="pi pi-exclamation-circle"></i>
+                <span>{{ errorMessage }}</span>
+              </div>
+            </div>
+            
             <!-- Step 1: Location -->
             <div>
               <div class="flex items-center gap-2 mb-3">
@@ -290,14 +299,13 @@ loadRecentAnalyses();
                       <p class="text-sm text-slate-500">{{ selectedLocation.lat.toFixed(5) }}, {{ selectedLocation.lng.toFixed(5) }}</p>
                     </div>
                   </div>
-                  <Button 
-                    icon="pi pi-times" 
-                    severity="secondary" 
-                    text 
-                    rounded 
+                  <button 
                     @click="clearLocation"
-                    v-tooltip="'Zmień lokalizację'"
-                  />
+                    class="p-2 text-slate-400 hover:text-red-500 transition-colors"
+                    title="Zmień lokalizację"
+                  >
+                    <i class="pi pi-times"></i>
+                  </button>
                 </div>
               </div>
               
@@ -318,14 +326,13 @@ loadRecentAnalyses();
                   <span class="text-red-500">*</span>
                 </div>
                 <div class="relative">
-                  <InputNumber 
-                    v-model="price"
-                    placeholder="np. 650 000"
-                    :min="0"
-                    :max="50000000"
-                    locale="pl-PL"
-                    class="w-full"
-                    inputClass="!py-3 !text-lg !pr-16"
+                  <input 
+                    v-model.number="price"
+                    type="number"
+                    placeholder="np. 650000"
+                    min="0"
+                    max="50000000"
+                    class="w-full py-3 px-4 pr-16 text-lg rounded-xl border-2 border-slate-200 focus:border-blue-400 focus:outline-none transition-colors"
                     :disabled="isLoading"
                   />
                   <span class="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 font-medium">PLN</span>
@@ -339,15 +346,14 @@ loadRecentAnalyses();
                   <span class="text-red-500">*</span>
                 </div>
                 <div class="relative">
-                  <InputNumber 
-                    v-model="areaSqm"
+                  <input 
+                    v-model.number="areaSqm"
+                    type="number"
                     placeholder="np. 54"
-                    :min="1"
-                    :max="1000"
-                    :minFractionDigits="0"
-                    :maxFractionDigits="1"
-                    class="w-full"
-                    inputClass="!py-3 !text-lg !pr-12"
+                    min="1"
+                    max="1000"
+                    step="0.1"
+                    class="w-full py-3 px-4 pr-12 text-lg rounded-xl border-2 border-slate-200 focus:border-blue-400 focus:outline-none transition-colors"
                     :disabled="isLoading"
                   />
                   <span class="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 font-medium">m²</span>
@@ -379,10 +385,11 @@ loadRecentAnalyses();
                       <i class="pi pi-link mr-1"></i>
                       Link do ogłoszenia (opcjonalnie)
                     </label>
-                    <InputText 
+                    <input 
                       v-model="referenceUrl"
+                      type="url"
                       placeholder="https://www.otodom.pl/pl/oferta/..."
-                      class="w-full"
+                      class="w-full py-3 px-4 rounded-xl border-2 border-slate-200 focus:border-blue-400 focus:outline-none transition-colors"
                       :disabled="isLoading"
                     />
                     <p class="text-xs text-slate-400 mt-1">Zapisany jako referencja w raporcie</p>
@@ -393,13 +400,21 @@ loadRecentAnalyses();
                       <i class="pi pi-compass mr-1"></i>
                       Zasięg analizy:
                     </span>
-                    <SelectButton 
-                      v-model="radius" 
-                      :options="radiusOptions" 
-                      optionLabel="label" 
-                      optionValue="value" 
-                      :allowEmpty="false"
-                    />
+                    <div class="flex gap-2">
+                      <button
+                        v-for="option in radiusOptions"
+                        :key="option.value"
+                        @click="radius = option.value"
+                        :class="[
+                          'px-4 py-2 rounded-lg font-medium transition-colors',
+                          radius === option.value 
+                            ? 'bg-blue-500 text-white' 
+                            : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                        ]"
+                      >
+                        {{ option.label }}
+                      </button>
+                    </div>
                   </div>
                 </div>
               </Transition>
@@ -407,13 +422,14 @@ loadRecentAnalyses();
             
             <!-- Submit Button -->
             <div class="flex justify-end">
-              <Button
-                :label="isLoading ? 'Analizuję...' : 'Analizuj lokalizację'"
-                :icon="isLoading ? 'pi pi-spin pi-spinner' : 'pi pi-search'"
+              <button
                 :disabled="!canSubmit"
                 @click="handleAnalyze"
-                class="!py-4 !px-10 !text-lg !font-semibold !rounded-full !shadow-lg"
-              />
+                class="py-4 px-10 text-lg font-semibold rounded-full shadow-lg bg-gradient-to-r from-blue-500 to-blue-600 text-white hover:shadow-xl hover:scale-105 transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100 flex items-center gap-2"
+              >
+                <i :class="isLoading ? 'pi pi-spin pi-spinner' : 'pi pi-search'"></i>
+                {{ isLoading ? 'Analizuję...' : 'Analizuj lokalizację' }}
+              </button>
             </div>
 
             <!-- Loading Status -->
@@ -422,7 +438,7 @@ loadRecentAnalyses();
                 <div class="bg-blue-50 rounded-2xl p-6 border border-blue-100">
                   <div class="flex items-center gap-4 mb-4">
                     <div class="w-14 h-14 rounded-xl bg-blue-500 flex items-center justify-center shadow-lg">
-                      <ProgressSpinner style="width: 28px; height: 28px" strokeWidth="4" fill="transparent" animationDuration=".7s" />
+                      <i class="pi pi-spin pi-spinner text-2xl text-white"></i>
                     </div>
                     <div class="flex-1">
                       <p class="font-bold text-lg text-slate-800">{{ loadingStatus }}</p>

@@ -1,12 +1,11 @@
 <script setup lang="ts">
 /**
  * Report View - wyświetla raport z analizy
+ * Wersja zmigrowana do czystego Tailwind CSS
  */
 import { ref, computed, onMounted, nextTick, watch } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
 import { analyzerApi, type AnalysisReport, type POICategoryStats, type TrafficAnalysis } from '@/api/analyzerApi';
-import ToggleSwitch from 'primevue/toggleswitch';
-import Galleria from 'primevue/galleria';
 import * as L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 
@@ -115,58 +114,53 @@ const hasReport = computed(() => report.value !== null);
 
 const scoreColor = computed(() => {
   const score = report.value?.neighborhood?.score;
-  if (score === null || score === undefined) return 'secondary';
-  if (score >= 70) return 'success';
-  if (score >= 50) return 'info';
-  if (score >= 30) return 'warn';
-  return 'danger';
-});
-
-const scoreLabel = computed(() => {
-  const score = report.value?.neighborhood?.score;
-  if (score === null || score === undefined) return 'Brak danych';
-  if (score >= 70) return 'Bardzo dobra';
-  if (score >= 50) return 'Dobra';
-  if (score >= 30) return 'Przeciętna';
-  if (score >= 30) return 'Przeciętna';
-  return 'Słaba';
+  if (score === null || score === undefined) return 'bg-slate-500';
+  if (score >= 70) return 'bg-emerald-500';
+  if (score >= 50) return 'bg-blue-500';
+  if (score >= 30) return 'bg-amber-500';
+  return 'bg-red-500';
 });
 
 const trafficInfo = computed<TrafficAnalysis | null>(() => {
   return (report.value?.neighborhood?.details?.traffic as TrafficAnalysis) || null;
 });
 
-const trafficSeverity = computed(() => {
+const trafficColor = computed(() => {
   const level = trafficInfo.value?.level;
-  if (level === 'Low') return 'success';
-  if (level === 'Moderate') return 'warn';
-  if (level === 'High') return 'danger';
-  if (level === 'Extreme') return 'danger'; 
-  return 'secondary';
+  if (level === 'Low') return 'bg-emerald-500';
+  if (level === 'Moderate') return 'bg-amber-500';
+  if (level === 'High') return 'bg-red-500';
+  if (level === 'Extreme') return 'bg-red-700'; 
+  return 'bg-slate-500';
 });
 
 // Gallery State
 const displayGallery = ref(false);
 const activeImageIndex = ref(0);
-const responsiveOptions = ref([
-    {
-        breakpoint: '1024px',
-        numVisible: 5
-    },
-    {
-        breakpoint: '768px',
-        numVisible: 3
-    },
-    {
-        breakpoint: '560px',
-        numVisible: 1
-    }
-]);
 
 function openGallery(index: number) {
     activeImageIndex.value = index;
     displayGallery.value = true;
 }
+
+function closeGallery() {
+    displayGallery.value = false;
+}
+
+function nextImage() {
+    if (report.value?.listing.images) {
+        activeImageIndex.value = (activeImageIndex.value + 1) % report.value.listing.images.length;
+    }
+}
+
+function prevImage() {
+    if (report.value?.listing.images) {
+        activeImageIndex.value = (activeImageIndex.value - 1 + report.value.listing.images.length) % report.value.listing.images.length;
+    }
+}
+
+// Collapsible description
+const showDescription = ref(false);
 
 // Methods
 function goBack() {
@@ -201,8 +195,6 @@ function formatPricePerSqm(price: number | null): string {
   }).format(price) + '/m²';
 }
 
-
-
 function getCategoryName(category: string): string {
   const names: Record<string, string> = {
     shops: 'Sklepy',
@@ -233,27 +225,27 @@ function getCategoryIcon(category: string): string {
 
 function getCategoryColor(category: string): string {
   const colors: Record<string, string> = {
-    shops: '#F59E0B',      // amber-500
-    transport: '#3B82F6',  // blue-500
-    education: '#8B5CF6',  // violet-500
-    health: '#EF4444',     // red-500
-    nature: '#10B981',     // emerald-500 (Zieleń)
-    leisure: '#F97316',    // orange-500 (Sport)
-    food: '#EC4899',       // pink-500
-    finance: '#64748B',    // slate-500
+    shops: '#F59E0B',
+    transport: '#3B82F6',
+    education: '#8B5CF6',
+    health: '#EF4444',
+    nature: '#10B981',
+    leisure: '#F97316',
+    food: '#EC4899',
+    finance: '#64748B',
   };
   return colors[category] || '#6B7280';
 }
 
-function getRatingSeverity(rating: string): string {
+function getRatingColor(rating: string): string {
   const map: Record<string, string> = {
-    doskonale: 'success',
-    dobrze: 'info',
-    ok: 'warn',
-    daleko: 'danger',
-    brak: 'secondary',
+    doskonale: 'bg-emerald-500 text-white',
+    dobrze: 'bg-blue-500 text-white',
+    ok: 'bg-amber-500 text-white',
+    daleko: 'bg-red-500 text-white',
+    brak: 'bg-slate-400 text-white',
   };
-  return map[rating] || 'secondary';
+  return map[rating] || 'bg-slate-400 text-white';
 }
 
 // Load Google Maps API dynamically
@@ -293,17 +285,14 @@ function loadGoogleMapsApi(): Promise<void> {
 
 // Cleanup maps
 function cleanupMaps() {
-  // Cleanup Leaflet POI markers
   leafletPoiMarkers.value.forEach(marker => marker.remove());
   leafletPoiMarkers.value = [];
   
-  // Cleanup Leaflet map
   if (map.value) {
     map.value.remove();
     map.value = null;
   }
   
-  // Cleanup Google Maps markers
   googleMarkers.value.forEach(marker => marker.setMap(null));
   googleMarkers.value = [];
   googleMap.value = null;
@@ -324,12 +313,10 @@ function initLeafletMap() {
     attribution: '© OpenStreetMap contributors'
   }).addTo(map.value as any);
   
-  // Main marker
   L.marker([lat, lon]).addTo(map.value as any)
     .bindPopup('<b>' + (report.value.listing.title || 'Nieruchomość') + '</b>')
     .openPopup();
     
-  // Add POI markers
   if (report.value.neighborhood.markers) {
     report.value.neighborhood.markers.forEach(poi => {
       const color = poi.color || 'blue';
@@ -342,20 +329,17 @@ function initLeafletMap() {
         fillOpacity: 0.8
       });
       
-      // Store category for visibility toggling
       (circle as any)._category = poi.category;
       
-      // Only add if category is visible
       if (categoryVisibility.value[poi.category] !== false) {
         circle.addTo(map.value as any);
       }
       
       circle.bindPopup(`
         <b>${poi.name}</b><br>
-        <span class="text-xs text-gray-500">${poi.subcategory} (${Math.round(poi.distance || 0)}m)</span>
+        <span style="font-size: 12px; color: #666;">${poi.subcategory} (${Math.round(poi.distance || 0)}m)</span>
       `);
       
-      // Track marker for visibility updates
       leafletPoiMarkers.value.push(circle);
     });
   }
@@ -368,7 +352,6 @@ async function initGoogleMap() {
   try {
     await loadGoogleMapsApi();
   } catch (e) {
-    // Error already set in loadGoogleMapsApi
     return;
   }
   
@@ -383,7 +366,6 @@ async function initGoogleMap() {
     mapTypeId: 'roadmap',
   });
   
-  // Main marker
   const mainMarker = new window.google.maps.Marker({
     position: { lat, lng: lon },
     map: googleMap.value,
@@ -396,7 +378,6 @@ async function initGoogleMap() {
   infoWindow.open(googleMap.value, mainMarker);
   googleMarkers.value.push(mainMarker);
   
-  // Add POI markers
   if (report.value.neighborhood.markers) {
     report.value.neighborhood.markers.forEach(poi => {
       const color = poi.color || 'blue';
@@ -416,7 +397,6 @@ async function initGoogleMap() {
         },
       });
       
-      // Store category for visibility toggling
       marker._category = poi.category;
       
       const poiInfoWindow = new window.google.maps.InfoWindow({
@@ -432,7 +412,6 @@ async function initGoogleMap() {
   }
 }
 
-// Main init function that routes to correct map type
 function initMap() {
   if (selectedMapType.value === 'google') {
     initGoogleMap();
@@ -441,7 +420,6 @@ function initMap() {
   }
 }
 
-// Watch for map type changes
 watch(selectedMapType, () => {
   if (report.value) {
     nextTick(initMap);
@@ -450,7 +428,6 @@ watch(selectedMapType, () => {
 
 // Load report
 onMounted(async () => {
-  // Sprawdź czy raport przyszedł z nowej analizy (przez sessionStorage)
   if (route.query.fromAnalysis === 'true') {
     const storedReport = sessionStorage.getItem('lastReport');
     const storedUrl = sessionStorage.getItem('lastReportUrl');
@@ -458,7 +435,6 @@ onMounted(async () => {
       try {
         report.value = JSON.parse(storedReport);
         originalUrl.value = storedUrl || '';
-        // Wyczyść po odczytaniu
         sessionStorage.removeItem('lastReport');
         sessionStorage.removeItem('lastReportUrl');
         nextTick(initMap);
@@ -469,7 +445,6 @@ onMounted(async () => {
     }
   }
   
-  // Sprawdź czy mamy ID w route (z historii)
   const id = route.params.id;
   if (id) {
     isLoading.value = true;
@@ -484,410 +459,451 @@ onMounted(async () => {
     return;
   }
   
-  // Brak danych - wróć na landing
   router.replace({ name: 'landing' });
 });
 </script>
 
 <template>
-  <div class="min-h-screen bg-gradient-to-br from-surface-50 via-white to-primary-50 dark:from-surface-900 dark:via-surface-800 dark:to-surface-900 p-4 md:p-6">
+  <div class="min-h-screen bg-gradient-to-br from-slate-50 via-white to-blue-50 p-4 md:p-6">
     <div class="max-w-5xl mx-auto">
-    <!-- Loading - Modern animated -->
-    <div v-if="isLoading" class="flex flex-col justify-center items-center min-h-96 gap-4">
-      <div class="w-20 h-20 rounded-2xl bg-gradient-to-br from-primary-400 to-primary-600 flex items-center justify-center shadow-xl">
-        <ProgressSpinner style="width: 40px; height: 40px" strokeWidth="4" fill="transparent" animationDuration=".8s" />
+      <!-- Loading -->
+      <div v-if="isLoading" class="flex flex-col justify-center items-center min-h-96 gap-4">
+        <div class="w-20 h-20 rounded-2xl bg-gradient-to-br from-blue-400 to-blue-600 flex items-center justify-center shadow-xl">
+          <i class="pi pi-spin pi-spinner text-3xl text-white"></i>
+        </div>
+        <p class="text-slate-500 font-medium">Ładowanie raportu...</p>
       </div>
-      <p class="text-surface-500 font-medium">Ładowanie raportu...</p>
-    </div>
-    
-    <!-- Error -->
-    <Message v-else-if="error" severity="error" :closable="false">
-      {{ error }}
-    </Message>
-    
-    <!-- Report -->
-    <div v-else-if="hasReport" class="flex flex-col gap-6">
-      <!-- Header - Modern gradient banner -->
-      <div class="relative overflow-hidden bg-gradient-to-br from-white to-surface-50 dark:from-surface-800 dark:to-surface-900 rounded-2xl p-6 shadow-lg border border-surface-100 dark:border-surface-700">
-        <!-- Decorative accent -->
-        <div class="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-primary-400 via-primary-500 to-primary-600"></div>
-        
-        <div class="flex flex-wrap justify-between items-start gap-4">
-          <div class="flex-1 min-w-0">
-            <div class="flex items-center gap-2 mb-2">
-                <Button icon="pi pi-arrow-left" text rounded @click="goBack" class="!-ml-2 flex-shrink-0" />
-                <h1 class="text-xl md:text-2xl font-bold text-surface-900 dark:text-surface-100 leading-tight">
+      
+      <!-- Error -->
+      <div v-else-if="error" class="p-6 bg-red-50 border border-red-200 rounded-xl text-red-700">
+        <div class="flex items-center gap-2">
+          <i class="pi pi-exclamation-circle text-xl"></i>
+          <span class="font-medium">{{ error }}</span>
+        </div>
+      </div>
+      
+      <!-- Report -->
+      <div v-else-if="hasReport" class="flex flex-col gap-6">
+        <!-- Header -->
+        <div class="relative overflow-hidden bg-white rounded-2xl p-6 shadow-lg border border-slate-100">
+          <div class="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-blue-400 via-blue-500 to-blue-600"></div>
+          
+          <div class="flex flex-wrap justify-between items-start gap-4">
+            <div class="flex-1 min-w-0">
+              <div class="flex items-center gap-2 mb-2">
+                <button @click="goBack" class="p-2 -ml-2 text-slate-400 hover:text-blue-500 transition-colors">
+                  <i class="pi pi-arrow-left text-xl"></i>
+                </button>
+                <h1 class="text-xl md:text-2xl font-bold text-slate-900 leading-tight truncate">
                   {{ report!.listing.title || 'Analiza ogłoszenia' }}
                 </h1>
+              </div>
+              
+              <p v-if="report!.listing.location" class="flex items-center gap-2 text-sm text-slate-500 font-medium ml-1">
+                <i class="pi pi-map-marker text-blue-500"></i>
+                {{ report!.listing.location }}
+              </p>
+            </div>
+            <div class="flex gap-2 flex-shrink-0">
+              <button 
+                @click="openOriginalUrl"
+                class="px-4 py-2 rounded-xl border-2 border-slate-200 text-slate-600 font-medium hover:bg-slate-50 transition-colors flex items-center gap-2"
+              >
+                <i class="pi pi-external-link"></i>
+                <span class="hidden sm:inline">Zobacz ogłoszenie</span>
+              </button>
+              <button 
+                @click="analyzeAnother"
+                class="px-4 py-2 rounded-xl bg-gradient-to-r from-blue-500 to-blue-600 text-white font-medium hover:shadow-lg transition-all flex items-center gap-2"
+              >
+                <i class="pi pi-plus"></i>
+                <span class="hidden sm:inline">Analizuj kolejne</span>
+              </button>
+            </div>
+          </div>
+        </div>
+        
+        <!-- Errors/Warnings -->
+        <div v-for="err in report!.errors" :key="err" class="p-4 bg-red-50 border border-red-200 rounded-xl text-red-700 flex items-center gap-2">
+          <i class="pi pi-exclamation-circle"></i>
+          <span>{{ err }}</span>
+        </div>
+        <div v-for="warn in report!.warnings" :key="warn" class="p-4 bg-amber-50 border border-amber-200 rounded-xl text-amber-700 flex items-center gap-2">
+          <i class="pi pi-exclamation-triangle"></i>
+          <span>{{ warn }}</span>
+        </div>
+        
+        <!-- TL;DR Section -->
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
+          <!-- Plusy -->
+          <div class="relative bg-gradient-to-br from-emerald-50 to-green-50 rounded-2xl p-6 shadow-lg border border-emerald-100 overflow-hidden">
+            <div class="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-emerald-400 to-green-500"></div>
+            
+            <div class="flex items-center gap-3 mb-5">
+              <div class="w-12 h-12 rounded-xl bg-gradient-to-br from-emerald-400 to-green-500 flex items-center justify-center shadow-lg">
+                <i class="pi pi-check-circle text-xl text-white"></i>
+              </div>
+              <div>
+                <h3 class="font-bold text-lg text-slate-800">Plusy</h3>
+                <p class="text-sm text-slate-600">{{ report!.tldr.pros.length }} zalet</p>
+              </div>
             </div>
             
-            <p v-if="report!.listing.location" class="flex items-center gap-2 text-sm text-surface-500 font-medium ml-1">
-              <i class="pi pi-map-marker text-primary-500"></i>
-              {{ report!.listing.location }}
-            </p>
-          </div>
-          <div class="flex gap-2 flex-shrink-0">
-            <Button 
-              label="Zobacz ogłoszenie" 
-              icon="pi pi-external-link" 
-              severity="secondary"
-              outlined
-              class="!rounded-xl"
-              @click="openOriginalUrl"
-            />
-            <Button 
-              label="Analizuj kolejne" 
-              icon="pi pi-plus"
-              class="!rounded-xl !bg-gradient-to-r !from-primary-500 !to-primary-600 !border-0"
-              @click="analyzeAnother"
-            />
-          </div>
-        </div>
-      </div>
-      
-      <!-- Errors/Warnings -->
-      <Message v-for="err in report!.errors" :key="err" severity="error" :closable="false">
-        {{ err }}
-      </Message>
-      <Message v-for="warn in report!.warnings" :key="warn" severity="warn" :closable="false">
-        {{ warn }}
-      </Message>
-      
-      <!-- TL;DR Section - Modern split design -->
-      <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
-        <!-- Plusy -->
-        <div class="relative bg-gradient-to-br from-emerald-50 to-green-50 dark:from-emerald-900/20 dark:to-green-900/20 rounded-2xl p-6 shadow-lg border border-emerald-100 dark:border-emerald-800/50 overflow-hidden">
-          <div class="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-emerald-400 to-green-500"></div>
-          
-          <div class="flex items-center gap-3 mb-5">
-            <div class="w-12 h-12 rounded-xl bg-gradient-to-br from-emerald-400 to-green-500 flex items-center justify-center shadow-lg">
-              <i class="pi pi-check-circle text-xl text-white"></i>
-            </div>
-            <div>
-              <h3 class="font-bold text-lg text-surface-800 dark:text-surface-100">Plusy</h3>
-              <p class="text-sm text-dark">{{ report!.tldr.pros.length }} zalet</p>
-            </div>
+            <ul class="space-y-3">
+              <li v-for="pro in report!.tldr.pros" :key="pro" class="flex items-start gap-3 p-3 bg-white/60 rounded-xl">
+                <span class="flex-shrink-0 w-6 h-6 rounded-full bg-emerald-500 flex items-center justify-center mt-0.5">
+                  <i class="pi pi-check text-white text-xs"></i>
+                </span>
+                <span class="text-slate-700">{{ pro }}</span>
+              </li>
+            </ul>
           </div>
           
-          <ul class="space-y-3">
-            <li v-for="pro in report!.tldr.pros" :key="pro" class="flex items-start gap-3 p-3 bg-white/60 dark:bg-surface-800/40 rounded-xl">
-              <span class="flex-shrink-0 w-6 h-6 rounded-full bg-emerald-500 flex items-center justify-center mt-0.5">
-                <i class="pi pi-check text-white text-xs"></i>
-              </span>
-              <span class="text-surface-700 dark:text-surface-200">{{ pro }}</span>
-            </li>
-          </ul>
+          <!-- Ryzyka -->
+          <div class="relative bg-gradient-to-br from-orange-50 to-amber-50 rounded-2xl p-6 shadow-lg border border-orange-100 overflow-hidden">
+            <div class="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-orange-400 to-amber-500"></div>
+            
+            <div class="flex items-center gap-3 mb-5">
+              <div class="w-12 h-12 rounded-xl bg-gradient-to-br from-orange-400 to-amber-500 flex items-center justify-center shadow-lg">
+                <i class="pi pi-exclamation-triangle text-xl text-white"></i>
+              </div>
+              <div>
+                <h3 class="font-bold text-lg text-slate-800">Potencjalne ryzyka</h3>
+                <p class="text-sm text-slate-600">{{ report!.tldr.cons.length }} uwag</p>
+              </div>
+            </div>
+            
+            <ul class="space-y-3">
+              <li v-for="con in report!.tldr.cons" :key="con" class="flex items-start gap-3 p-3 bg-white/60 rounded-xl">
+                <span class="flex-shrink-0 w-6 h-6 rounded-full bg-orange-500 flex items-center justify-center mt-0.5">
+                  <i class="pi pi-exclamation-triangle text-white text-xs"></i>
+                </span>
+                <span class="text-slate-700">{{ con }}</span>
+              </li>
+            </ul>
+          </div>
         </div>
         
-        <!-- Ryzyka -->
-        <div class="relative bg-gradient-to-br from-orange-50 to-amber-50 dark:from-orange-900/20 dark:to-amber-900/20 rounded-2xl p-6 shadow-lg border border-orange-100 dark:border-orange-800/50 overflow-hidden">
-          <div class="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-orange-400 to-amber-500"></div>
+        <!-- Dane z ogłoszenia -->
+        <div class="relative bg-white rounded-2xl p-6 shadow-lg border border-slate-100 overflow-hidden">
+          <div class="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-blue-400 via-indigo-500 to-violet-500"></div>
           
-          <div class="flex items-center gap-3 mb-5">
-            <div class="w-12 h-12 rounded-xl bg-gradient-to-br from-orange-400 to-amber-500 flex items-center justify-center shadow-lg">
-              <i class="pi pi-exclamation-triangle text-xl text-white"></i>
+          <div class="flex items-center gap-3 mb-6">
+            <div class="w-12 h-12 rounded-xl bg-gradient-to-br from-blue-400 to-indigo-500 flex items-center justify-center shadow-lg">
+              <i class="pi pi-file text-xl text-white"></i>
             </div>
-            <div>
-              <h3 class="font-bold text-lg text-surface-800 dark:text-surface-100">Potencjalne ryzyka</h3>
-              <p class="text-sm text-dark">{{ report!.tldr.cons.length }} uwag</p>
+            <h3 class="font-bold text-xl text-slate-800">Dane z ogłoszenia</h3>
+          </div>
+          
+          <!-- Stats Grid -->
+          <div class="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
+            <div class="bg-slate-50 rounded-xl p-4 text-center">
+              <span class="text-xs font-medium text-slate-500 uppercase tracking-wide">Cena</span>
+              <p class="text-xl md:text-2xl font-bold text-slate-800 mt-1">{{ formatPrice(report!.listing.price) }}</p>
+            </div>
+            <div class="bg-slate-50 rounded-xl p-4 text-center">
+              <span class="text-xs font-medium text-slate-500 uppercase tracking-wide">Cena/m²</span>
+              <p class="text-xl md:text-2xl font-bold text-slate-800 mt-1">{{ formatPricePerSqm(report!.listing.price_per_sqm) }}</p>
+            </div>
+            <div class="bg-slate-50 rounded-xl p-4 text-center">
+              <span class="text-xs font-medium text-slate-500 uppercase tracking-wide">Metraż</span>
+              <p class="text-xl md:text-2xl font-bold text-slate-800 mt-1">{{ report!.listing.area_sqm ? `${report!.listing.area_sqm} m²` : '-' }}</p>
+            </div>
+            <div class="bg-slate-50 rounded-xl p-4 text-center">
+              <span class="text-xs font-medium text-slate-500 uppercase tracking-wide">Pokoje</span>
+              <p class="text-xl md:text-2xl font-bold text-slate-800 mt-1">{{ report!.listing.rooms || '-' }}</p>
+            </div>
+            <div v-if="report!.listing.floor" class="bg-slate-50 rounded-xl p-4 text-center">
+              <span class="text-xs font-medium text-slate-500 uppercase tracking-wide">Piętro</span>
+              <p class="text-xl md:text-2xl font-bold text-slate-800 mt-1">{{ report!.listing.floor }}</p>
             </div>
           </div>
           
-          <ul class="space-y-3">
-            <li v-for="con in report!.tldr.cons" :key="con" class="flex items-start gap-3 p-3 bg-white/60 dark:bg-surface-800/40 rounded-xl">
-              <span class="flex-shrink-0 w-6 h-6 rounded-full bg-orange-500 flex items-center justify-center mt-0.5">
-                <i class="pi pi-exclamation-triangle text-white text-xs"></i>
-              </span>
-              <span class="text-surface-700 dark:text-surface-200">{{ con }}</span>
-            </li>
-          </ul>
-        </div>
-      </div>
-      
-      <!-- Dane z ogłoszenia - Modern stat cards -->
-      <div class="relative bg-gradient-to-br from-white to-surface-50 dark:from-surface-800 dark:to-surface-900 rounded-2xl p-6 shadow-lg border border-surface-100 dark:border-surface-700 overflow-hidden">
-        <div class="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-blue-400 via-indigo-500 to-violet-500"></div>
-        
-        <div class="flex items-center gap-3 mb-6">
-          <div class="w-12 h-12 rounded-xl bg-gradient-to-br from-blue-400 to-indigo-500 flex items-center justify-center shadow-lg">
-            <i class="pi pi-file text-xl text-white"></i>
-          </div>
-          <h3 class="font-bold text-xl text-surface-800 dark:text-surface-100">Dane z ogłoszenia</h3>
-        </div>
-        
-        <!-- Stats Grid -->
-        <div class="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
-          <div class="bg-surface-50 dark:bg-surface-800 rounded-xl p-4 text-center">
-            <span class="text-xs font-medium text-surface-500 uppercase tracking-wide">Cena</span>
-            <p class="text-xl md:text-2xl font-bold text-surface-800 dark:text-surface-100 mt-1">{{ formatPrice(report!.listing.price) }}</p>
-          </div>
-          <div class="bg-surface-50 dark:bg-surface-800 rounded-xl p-4 text-center">
-            <span class="text-xs font-medium text-surface-500 uppercase tracking-wide">Cena/m²</span>
-            <p class="text-xl md:text-2xl font-bold text-surface-800 dark:text-surface-100 mt-1">{{ formatPricePerSqm(report!.listing.price_per_sqm) }}</p>
-          </div>
-          <div class="bg-surface-50 dark:bg-surface-800 rounded-xl p-4 text-center">
-            <span class="text-xs font-medium text-surface-500 uppercase tracking-wide">Metraż</span>
-            <p class="text-xl md:text-2xl font-bold text-surface-800 dark:text-surface-100 mt-1">{{ report!.listing.area_sqm ? `${report!.listing.area_sqm} m²` : '-' }}</p>
-          </div>
-          <div class="bg-surface-50 dark:bg-surface-800 rounded-xl p-4 text-center">
-            <span class="text-xs font-medium text-surface-500 uppercase tracking-wide">Pokoje</span>
-            <p class="text-xl md:text-2xl font-bold text-surface-800 dark:text-surface-100 mt-1">{{ report!.listing.rooms || '-' }}</p>
-          </div>
-          <div v-if="report!.listing.floor" class="bg-surface-50 dark:bg-surface-800 rounded-xl p-4 text-center">
-            <span class="text-xs font-medium text-surface-500 uppercase tracking-wide">Piętro</span>
-            <p class="text-xl md:text-2xl font-bold text-surface-800 dark:text-surface-100 mt-1">{{ report!.listing.floor }}</p>
-          </div>
-        </div>
-        
-        <!-- Opis (collapsible) -->
-        <div v-if="report!.listing.description" class="mb-4">
-          <Fieldset legend="Opis" :toggleable="true" :collapsed="true" class="!rounded-xl !border-surface-200">
-            <p class="whitespace-pre-wrap text-sm text-surface-600 dark:text-surface-300">{{ report!.listing.description }}</p>
-          </Fieldset>
-        </div>
-        
-        <!-- Zdjęcia -->
-        <div v-if="report!.listing.images?.length">
-          <h4 class="font-semibold mb-3 text-surface-700 dark:text-surface-200 flex items-center gap-2">
-            <i class="pi pi-images text-primary-500"></i>
-            Zdjęcia ({{ report!.listing.images.length }})
-          </h4>
-          
-          <div class="flex gap-3 overflow-x-auto pb-4 scrollbar-hide">
-            <div 
-              v-for="(img, idx) in report!.listing.images" 
-              :key="idx"
-              class="relative flex-shrink-0 cursor-pointer group"
-              @click="openGallery(idx)"
+          <!-- Opis (collapsible) -->
+          <div v-if="report!.listing.description" class="mb-4">
+            <button 
+              @click="showDescription = !showDescription"
+              class="w-full px-4 py-3 bg-slate-50 rounded-xl flex items-center justify-between text-left hover:bg-slate-100 transition-colors"
             >
-              <img 
-                :src="img"
-                class="h-32 w-48 rounded-xl object-cover shadow-md group-hover:shadow-xl group-hover:scale-105 transition-all duration-300 border border-surface-100 dark:border-surface-700"
-                loading="lazy"
-              />
-              <div class="absolute inset-0 bg-black/0 group-hover:bg-black/10 rounded-xl transition-colors duration-300 flex items-center justify-center opacity-0 group-hover:opacity-100">
+              <span class="font-medium text-slate-700">Opis ogłoszenia</span>
+              <i :class="showDescription ? 'pi pi-chevron-up' : 'pi pi-chevron-down'" class="text-slate-400"></i>
+            </button>
+            <Transition name="accordion">
+              <div v-show="showDescription" class="mt-2 p-4 bg-slate-50 rounded-xl">
+                <p class="whitespace-pre-wrap text-sm text-slate-600">{{ report!.listing.description }}</p>
+              </div>
+            </Transition>
+          </div>
+          
+          <!-- Zdjęcia -->
+          <div v-if="report!.listing.images?.length">
+            <h4 class="font-semibold mb-3 text-slate-700 flex items-center gap-2">
+              <i class="pi pi-images text-blue-500"></i>
+              Zdjęcia ({{ report!.listing.images.length }})
+            </h4>
+            
+            <div class="flex gap-3 overflow-x-auto pb-4">
+              <div 
+                v-for="(img, idx) in report!.listing.images" 
+                :key="idx"
+                class="relative flex-shrink-0 cursor-pointer group"
+                @click="openGallery(idx)"
+              >
+                <img 
+                  :src="img"
+                  class="h-32 w-48 rounded-xl object-cover shadow-md group-hover:shadow-xl group-hover:scale-105 transition-all duration-300 border border-slate-100"
+                  loading="lazy"
+                />
+                <div class="absolute inset-0 bg-black/0 group-hover:bg-black/10 rounded-xl transition-colors duration-300 flex items-center justify-center opacity-0 group-hover:opacity-100">
                   <i class="pi pi-search-plus text-white text-2xl drop-shadow-md"></i>
+                </div>
+              </div>
+            </div>
+
+            <!-- Gallery Modal -->
+            <Teleport to="body">
+              <Transition name="fade">
+                <div v-if="displayGallery" class="fixed inset-0 z-50 bg-black/90 flex items-center justify-center" @click.self="closeGallery">
+                  <button @click="closeGallery" class="absolute top-4 right-4 p-2 text-white hover:text-slate-300 transition-colors">
+                    <i class="pi pi-times text-2xl"></i>
+                  </button>
+                  <button @click="prevImage" class="absolute left-4 p-3 text-white hover:text-slate-300 transition-colors">
+                    <i class="pi pi-chevron-left text-3xl"></i>
+                  </button>
+                  <img :src="report!.listing.images[activeImageIndex]" class="max-h-[85vh] max-w-[90vw] object-contain" />
+                  <button @click="nextImage" class="absolute right-4 p-3 text-white hover:text-slate-300 transition-colors">
+                    <i class="pi pi-chevron-right text-3xl"></i>
+                  </button>
+                  <div class="absolute bottom-4 text-white font-medium">
+                    {{ activeImageIndex + 1 }} / {{ report!.listing.images.length }}
+                  </div>
+                </div>
+              </Transition>
+            </Teleport>
+          </div>
+        </div>
+        
+        <!-- Okolica -->
+        <div class="relative bg-white rounded-2xl p-6 shadow-lg border border-slate-100 overflow-hidden">
+          <div class="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-blue-400 via-blue-500 to-blue-600"></div>
+
+          <div class="flex flex-wrap items-center justify-between gap-4 mb-8">
+            <div class="flex items-center gap-3">
+              <div class="w-12 h-12 rounded-xl bg-gradient-to-br from-blue-400 to-blue-600 flex items-center justify-center shadow-lg">
+                <i class="pi pi-map text-xl text-white"></i>
+              </div>
+              <div>
+                <h2 class="text-xl font-bold text-slate-800">Okolica</h2>
+                <p class="text-sm text-slate-500">Analiza lokalizacji i punktów POI</p>
+              </div>
+            </div>
+            
+            <div class="flex flex-wrap gap-3">
+              <div v-if="report!.neighborhood.has_location" class="flex items-center gap-2 bg-slate-50 px-4 py-2 rounded-xl border border-slate-200">
+                <span class="text-sm font-medium text-slate-600">Ocena:</span>
+                <span :class="[scoreColor, 'px-3 py-1 rounded-lg text-white text-sm font-bold']">
+                  {{ Math.round(report!.neighborhood.score || 0) }}/100
+                </span>
+              </div>
+
+              <div v-if="trafficInfo" class="flex items-center gap-2 bg-slate-50 px-4 py-2 rounded-xl border border-slate-200" :title="trafficInfo.description">
+                <span class="text-sm font-medium text-slate-600">Ruch:</span>
+                <span :class="[trafficColor, 'px-3 py-1 rounded-lg text-white text-sm font-bold']">
+                  {{ trafficInfo.label }}
+                </span>
               </div>
             </div>
           </div>
 
-          <Galleria
-            v-model:visible="displayGallery"
-            v-model:activeIndex="activeImageIndex"
-            :value="report!.listing.images"
-            :responsiveOptions="responsiveOptions"
-            :numVisible="7"
-            containerStyle="max-width: 850px"
-            :circular="true"
-            :fullScreen="true"
-            :showItemNavigators="true"
-            :showThumbnails="true"
-          >
-            <template #item="slotProps">
-                <img :src="slotProps.item" style="width: 100%; display: block; max-height: 85vh; object-fit: contain;" />
-            </template>
-            <template #thumbnail="slotProps">
-                <img :src="slotProps.item" style="width: 100px; height: 60px; object-fit: cover; display: block;" />
-            </template>
-          </Galleria>
-        </div>
-      </div>
-      
-      <!-- Okolica -->
-      <div class="relative bg-gradient-to-br from-white to-surface-50 dark:from-surface-800 dark:to-surface-900 rounded-2xl p-6 shadow-lg border border-surface-100 dark:border-surface-700 overflow-hidden">
-        <!-- Decoration -->
-        <div class="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-primary-400 via-primary-500 to-primary-600"></div>
-
-        <div class="flex items-center justify-between mb-8">
-          <div class="flex items-center gap-3">
-            <div class="w-12 h-12 rounded-xl bg-gradient-to-br from-primary-400 to-primary-600 flex items-center justify-center shadow-lg">
-              <i class="pi pi-map text-xl text-dark"></i>
-            </div>
-            <div>
-              <h2 class="text-xl font-bold text-surface-800 dark:text-surface-100">
-                Okolica
-              </h2>
-              <p class="text-sm text-surface-500">Analiza lokalizacji i punktów POI</p>
-            </div>
-          </div>
-          
-          <div v-if="report!.neighborhood.has_location" class="flex items-center gap-3 bg-white/50 dark:bg-surface-800/50 px-4 py-2 rounded-xl border border-surface-200 dark:border-surface-700 shadow-sm">
-            <span class="text-sm font-medium text-surface-600 dark:text-surface-300">Ocena lokalizacji:</span>
-            <Tag 
-              :value="`${Math.round(report!.neighborhood.score || 0)}/100`"
-              :severity="scoreColor"
-              class="!text-sm !px-3"
-            />
-          </div>
-
-          <div v-if="trafficInfo" class="flex items-center gap-3 bg-white/50 dark:bg-surface-800/50 px-4 py-2 rounded-xl border border-surface-200 dark:border-surface-700 shadow-sm" :title="trafficInfo.description">
-            <span class="text-sm font-medium text-surface-600 dark:text-surface-300">Ruch uliczny:</span>
-            <Tag 
-              :value="trafficInfo.label"
-              :severity="trafficSeverity"
-              class="!text-sm !px-3"
-            />
-          </div>
-        </div>
-
-        <div>
-          <!-- Brak lokalizacji -->
-          <div v-if="!report!.neighborhood.has_location" class="text-center py-12">
-            <div class="w-20 h-20 mx-auto bg-surface-100 dark:bg-surface-800 rounded-full flex items-center justify-center mb-4">
-              <i class="pi pi-map-marker text-3xl text-surface-400"></i>
-            </div>
-            <h3 class="text-lg font-medium text-surface-900 dark:text-surface-100 mb-2">Brak dokładnej lokalizacji</h3>
-            <p class="text-surface-500 max-w-md mx-auto">
-              Nie udało się ustalić dokładnego adresu nieruchomości, dlatego analiza okolicy jest ograniczona.
-            </p>
-          </div>
-          
-          <!-- Analiza okolicy -->
-          <div v-else>
-            <div class="bg-surface-50/50 dark:bg-surface-800/30 rounded-2xl p-6 mb-8 border border-surface-100 dark:border-surface-700/50">
-              <p class="text-lg leading-relaxed text-surface-700 dark:text-surface-300">
-                {{ report!.neighborhood.summary }}
+          <div>
+            <!-- Brak lokalizacji -->
+            <div v-if="!report!.neighborhood.has_location" class="text-center py-12">
+              <div class="w-20 h-20 mx-auto bg-slate-100 rounded-full flex items-center justify-center mb-4">
+                <i class="pi pi-map-marker text-3xl text-slate-400"></i>
+              </div>
+              <h3 class="text-lg font-medium text-slate-900 mb-2">Brak dokładnej lokalizacji</h3>
+              <p class="text-slate-500 max-w-md mx-auto">
+                Nie udało się ustalić dokładnego adresu nieruchomości, dlatego analiza okolicy jest ograniczona.
               </p>
             </div>
             
-            <!-- Map Type Selector -->
-            <div class="flex items-center justify-between mb-6">
-              <h3 class="text-lg font-bold text-surface-900 dark:text-surface-100">Mapa okolicy</h3>
-              <div class="flex items-center gap-3">
-                <span class="text-sm font-medium text-surface-500">Widok:</span>
-                <SelectButton 
-                  v-model="selectedMapType" 
-                  :options="mapTypeOptions" 
-                  optionLabel="label" 
-                  optionValue="value"
-                  :allowEmpty="false"
-                  class="!shadow-none scale-90"
-                />
+            <!-- Analiza okolicy -->
+            <div v-else>
+              <div class="bg-slate-50 rounded-2xl p-6 mb-8 border border-slate-100">
+                <p class="text-lg leading-relaxed text-slate-700">
+                  {{ report!.neighborhood.summary }}
+                </p>
               </div>
-            </div>
-            
-            <!-- Google Maps Error -->
-            <Message v-if="googleMapsError && selectedMapType === 'google'" severity="warn" :closable="false" class="mb-4">
-              {{ googleMapsError }}
-            </Message>
-            
-            <!-- Map Container -->
-            <div ref="mapContainer" class="w-full h-96 rounded-lg mb-6 border border-surface-200 z-0 relative"></div>
-            
-            <!-- Kategorie POI -->
-            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-              <div 
-                v-for="(stats, category) in report!.neighborhood.poi_stats" 
-                :key="category"
-                class="group relative bg-gradient-to-br from-white to-surface-50 dark:from-surface-800 dark:to-surface-900 rounded-2xl p-5 shadow-lg hover:shadow-xl transition-all duration-300 border border-surface-200 dark:border-surface-700 hover:scale-[1.02] hover:-translate-y-1"
-              >
-                <!-- Accent bar top -->
+              
+              <!-- Map Type Selector -->
+              <div class="flex items-center justify-between mb-6">
+                <h3 class="text-lg font-bold text-slate-900">Mapa okolicy</h3>
+                <div class="flex items-center gap-2">
+                  <span class="text-sm font-medium text-slate-500">Widok:</span>
+                  <div class="flex gap-1 bg-slate-100 p-1 rounded-lg">
+                    <button
+                      v-for="option in mapTypeOptions"
+                      :key="option.value"
+                      @click="selectedMapType = option.value as MapType"
+                      :class="[
+                        'px-3 py-1.5 rounded-md text-sm font-medium transition-colors',
+                        selectedMapType === option.value 
+                          ? 'bg-white text-slate-800 shadow-sm' 
+                          : 'text-slate-600 hover:text-slate-800'
+                      ]"
+                    >
+                      {{ option.label }}
+                    </button>
+                  </div>
+                </div>
+              </div>
+              
+              <!-- Google Maps Error -->
+              <div v-if="googleMapsError && selectedMapType === 'google'" class="p-4 bg-amber-50 border border-amber-200 rounded-xl text-amber-700 mb-4 flex items-center gap-2">
+                <i class="pi pi-exclamation-triangle"></i>
+                <span>{{ googleMapsError }}</span>
+              </div>
+              
+              <!-- Map Container -->
+              <div ref="mapContainer" class="w-full h-96 rounded-xl mb-6 border border-slate-200 z-0 relative"></div>
+              
+              <!-- Kategorie POI -->
+              <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
                 <div 
-                  class="absolute top-0 left-4 right-4 h-1 rounded-b-full opacity-80"
-                  :style="{ background: getCategoryColor(category) }"
-                ></div>
-                
-                <!-- Header -->
-                <div class="flex items-start gap-4 mb-3">
-                  <!-- Icon with gradient background -->
+                  v-for="(stats, category) in report!.neighborhood.poi_stats" 
+                  :key="category"
+                  class="group relative bg-white rounded-2xl p-5 shadow-lg hover:shadow-xl transition-all duration-300 border border-slate-200 hover:scale-[1.02] hover:-translate-y-1"
+                >
+                  <!-- Accent bar top -->
                   <div 
-                    class="flex-shrink-0 w-12 h-12 rounded-xl flex items-center justify-center shadow-md"
-                    :style="{ background: `linear-gradient(135deg, ${getCategoryColor(category)}20, ${getCategoryColor(category)}40)` }"
-                  >
-                    <i 
-                      :class="['pi', getCategoryIcon(category), 'text-xl']"
-                      :style="{ color: getCategoryColor(category) }"
-                    ></i>
+                    class="absolute top-0 left-4 right-4 h-1 rounded-b-full opacity-80"
+                    :style="{ background: getCategoryColor(category) }"
+                  ></div>
+                  
+                  <!-- Header -->
+                  <div class="flex items-start gap-4 mb-3">
+                    <div 
+                      class="flex-shrink-0 w-12 h-12 rounded-xl flex items-center justify-center shadow-md"
+                      :style="{ background: `linear-gradient(135deg, ${getCategoryColor(category)}20, ${getCategoryColor(category)}40)` }"
+                    >
+                      <i 
+                        :class="['pi', getCategoryIcon(category), 'text-xl']"
+                        :style="{ color: getCategoryColor(category) }"
+                      ></i>
+                    </div>
+                    
+                    <div class="flex-1 min-w-0">
+                      <div class="flex items-center justify-between gap-2 mb-1">
+                        <h4 class="font-bold text-lg text-slate-900 truncate">
+                          {{ getCategoryName(category) }}
+                        </h4>
+                        <span 
+                          v-if="report!.neighborhood.details[category]"
+                          :class="[getRatingColor(report!.neighborhood.details[category].rating), 'text-xs font-semibold px-2 py-0.5 rounded-md']"
+                        >
+                          {{ report!.neighborhood.details[category].rating }}
+                        </span>
+                      </div>
+                      <div class="flex items-center gap-2">
+                        <span class="text-xl font-bold" :style="{ color: getCategoryColor(category) }">
+                          {{ (stats as POICategoryStats).count }}
+                        </span>
+                        <span class="text-sm text-slate-500">w okolicy</span>
+                      </div>
+                    </div>
                   </div>
                   
-                  <!-- Title & Count -->
-                  <div class="flex-1 min-w-0">
-                    <div class="flex items-center justify-between gap-2 mb-1">
-                      <h4 class="font-bold text-lg text-surface-900 dark:text-surface-100 truncate">
-                        {{ getCategoryName(category) }}
-                      </h4>
-                      <!-- Rating Badge -->
-                      <Tag 
-                        v-if="report!.neighborhood.details[category]"
-                        :value="report!.neighborhood.details[category].rating"
-                        :severity="getRatingSeverity(report!.neighborhood.details[category].rating)"
-                        class="!text-xs !font-semibold !px-2 !py-0.5 flex-shrink-0"
-                      />
-                    </div>
-                    <div class="flex items-center gap-2">
-                      <span class="text-xl font-bold" :style="{ color: getCategoryColor(category) }">
-                        {{ (stats as POICategoryStats).count }}
-                      </span>
-                      <span class="text-sm text-surface-500">w okolicy</span>
-                    </div>
-                  </div>
-                </div>
-                
-                <!-- Map Toggle -->
-                <div class="flex items-center justify-between mb-4 p-2.5 bg-surface-100 dark:bg-surface-800 rounded-xl">
-                  <label :for="`map-${category}`" class="flex items-center gap-2 cursor-pointer">
-                    <i class="pi pi-map text-surface-400 text-sm"></i>
-                    <span class="text-sm font-medium text-surface-600 dark:text-surface-300">Na mapie</span>
-                  </label>
-                  <ToggleSwitch 
-                    :inputId="`map-${category}`"
-                    v-model="categoryVisibility[category]"
-                  />
-                </div>
-                
-                <!-- Nearest Distance -->
-                <div v-if="(stats as POICategoryStats).nearest" class="mb-3">
-                  <div class="flex items-center gap-2 text-sm text-surface-500 mb-2">
-                    <i class="pi pi-directions"></i>
-                    <span>Najbliżej</span>
-                    <span class="font-bold text-surface-700 dark:text-surface-200">
-                      {{ Math.round((stats as POICategoryStats).nearest) }}m
-                    </span>
-                  </div>
-                </div>
-                
-                <!-- Items List -->
-                <div v-if="(stats as POICategoryStats).items?.length" class="space-y-2">
-                  <div 
-                    v-for="(item, idx) in (stats as POICategoryStats).items.slice(0, 3)" 
-                    :key="item.name"
-                    class="flex items-center justify-between py-2 px-3 bg-surface-50 dark:bg-surface-800/50 rounded-lg hover:bg-surface-100 dark:hover:bg-surface-700 transition-colors"
-                  >
-                    <div class="flex items-center gap-2 min-w-0">
+                  <!-- Map Toggle -->
+                  <div class="flex items-center justify-between mb-4 p-2.5 bg-slate-100 rounded-xl">
+                    <label :for="`map-${category}`" class="flex items-center gap-2 cursor-pointer">
+                      <i class="pi pi-map text-slate-400 text-sm"></i>
+                      <span class="text-sm font-medium text-slate-600">Na mapie</span>
+                    </label>
+                    <button 
+                      :id="`map-${category}`"
+                      @click="toggleCategoryVisibility(category)"
+                      :class="[
+                        'w-12 h-6 rounded-full transition-colors relative',
+                        categoryVisibility[category] ? 'bg-blue-500' : 'bg-slate-300'
+                      ]"
+                    >
                       <span 
-                        class="w-2 h-2 rounded-full flex-shrink-0"
-                        :style="{ background: getCategoryColor(category) }"
+                        :class="[
+                          'absolute top-1 w-4 h-4 bg-white rounded-full transition-transform shadow-sm',
+                          categoryVisibility[category] ? 'left-7' : 'left-1'
+                        ]"
                       ></span>
-                      <span class="truncate text-sm text-surface-700 dark:text-surface-300">{{ item.name }}</span>
-                    </div>
-                    <span class="flex-shrink-0 text-xs font-medium px-2 py-1 bg-surface-200 dark:bg-surface-600 rounded-full text-surface-600 dark:text-surface-200">
-                      {{ item.distance_m }}m
-                    </span>
+                    </button>
                   </div>
-                </div>
-                
-                <!-- Empty state -->
-                <div v-else class="text-center py-4 text-surface-400">
-                  <i class="pi pi-info-circle mb-2"></i>
-                  <p class="text-sm">Brak w pobliżu</p>
+                  
+                  <!-- Nearest Distance -->
+                  <div v-if="(stats as POICategoryStats).nearest" class="mb-3">
+                    <div class="flex items-center gap-2 text-sm text-slate-500 mb-2">
+                      <i class="pi pi-directions"></i>
+                      <span>Najbliżej</span>
+                      <span class="font-bold text-slate-700">
+                        {{ Math.round((stats as POICategoryStats).nearest) }}m
+                      </span>
+                    </div>
+                  </div>
+                  
+                  <!-- Items List -->
+                  <div v-if="(stats as POICategoryStats).items?.length" class="space-y-2">
+                    <div 
+                      v-for="item in (stats as POICategoryStats).items.slice(0, 3)" 
+                      :key="item.name"
+                      class="flex items-center justify-between py-2 px-3 bg-slate-50 rounded-lg hover:bg-slate-100 transition-colors"
+                    >
+                      <div class="flex items-center gap-2 min-w-0">
+                        <span 
+                          class="w-2 h-2 rounded-full flex-shrink-0"
+                          :style="{ background: getCategoryColor(category) }"
+                        ></span>
+                        <span class="truncate text-sm text-slate-700">{{ item.name }}</span>
+                      </div>
+                      <span class="flex-shrink-0 text-xs font-medium px-2 py-1 bg-slate-200 rounded-full text-slate-600">
+                        {{ item.distance_m }}m
+                      </span>
+                    </div>
+                  </div>
+                  
+                  <!-- Empty state -->
+                  <div v-else class="text-center py-4 text-slate-400">
+                    <i class="pi pi-info-circle mb-2"></i>
+                    <p class="text-sm">Brak w pobliżu</p>
+                  </div>
                 </div>
               </div>
             </div>
           </div>
+        </div>
       </div>
     </div>
   </div>
-  </div>
-</div>
 </template>
 
 <style scoped>
-@keyframes spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
+/* Accordion animation */
+.accordion-enter-active,
+.accordion-leave-active {
+  transition: all 0.3s ease;
+  max-height: 500px;
 }
 
-.spin-animation {
-  animation: spin 1s linear infinite;
+.accordion-enter-from,
+.accordion-leave-to {
+  opacity: 0;
+  max-height: 0;
+}
+
+/* Fade animation */
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.3s ease;
+}
+
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
 }
 </style>

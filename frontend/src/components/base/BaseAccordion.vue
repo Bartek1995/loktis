@@ -1,66 +1,38 @@
 <script setup lang="ts">
-/**
- * BaseAccordion - FAQ accordion component
- * Adapted from nefa-main
- */
-import { ref } from 'vue';
+import { ref } from 'vue'
+import MdiIcon from '@/components/icons/MdiIcon.vue'
+import { mdiChevronUp, mdiChevronDown } from '@mdi/js'
 
-interface AccordionItem {
-  title: string;
-  description: string;
+interface AccordionData {
+  title: string
+  description: string
 }
 
 defineProps<{
-  accordion: AccordionItem;
-}>();
+  accordion: AccordionData
+}>()
 
-const isOpen = ref(false);
-
-function toggle() {
-  isOpen.value = !isOpen.value;
-}
+const selected = ref(false)
 </script>
 
 <template>
-  <li
-    class="bg-white dark:bg-surface-800 rounded-xl shadow-sm overflow-hidden transition-all duration-300"
-    :class="{ 'shadow-md': isOpen }"
-  >
-    <button
-      @click="toggle"
-      class="w-full px-6 py-5 flex items-center justify-between text-left transition-colors hover:bg-surface-50 dark:hover:bg-surface-700"
-    >
-      <span class="font-semibold text-surface-800 dark:text-surface-100">
-        {{ accordion.title }}
-      </span>
-      <span
-        class="ml-4 shrink-0 w-8 h-8 flex items-center justify-center rounded-full bg-surface-100 dark:bg-surface-700 transition-transform duration-300"
-        :class="{ 'rotate-180': isOpen }"
-      >
-        <i class="pi pi-chevron-down text-sm text-surface-500"></i>
-      </span>
+  <li class="relative border-b-2 border-gray-200">
+    <button type="button" class="w-full py-4 text-left" @click="selected = !selected">
+      <div class="flex items-center justify-between">
+        <span class="font-medium">{{ accordion.title }}</span>
+        <MdiIcon v-if="selected" :path="mdiChevronUp" :size="20" />
+        <MdiIcon v-else :path="mdiChevronDown" :size="20" />
+      </div>
     </button>
-    
-    <Transition name="accordion">
-      <div v-show="isOpen" class="px-6 pb-5">
-        <p class="text-surface-600 dark:text-surface-400 leading-relaxed">
-          {{ accordion.description }}
-        </p>
+
+    <Transition name="slide">
+      <div v-if="selected" class="relative overflow-hidden">
+        <div class="py-2">
+          <p class="text-sm text-gray-700 tracking-wide leading-relaxed">
+            {{ accordion.description }}
+          </p>
+        </div>
       </div>
     </Transition>
   </li>
 </template>
-
-<style scoped>
-.accordion-enter-active,
-.accordion-leave-active {
-  transition: all 0.3s ease;
-  max-height: 500px;
-}
-
-.accordion-enter-from,
-.accordion-leave-to {
-  opacity: 0;
-  max-height: 0;
-}
-</style>

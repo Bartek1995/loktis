@@ -50,11 +50,9 @@
         "add_user": "Dodaj użytkownika",
         "edit_user": "Edytuj użytkownika",
         "delete_user": "Usuń użytkownika",
-
         "add_user_succes": "Użytkownik został pomyślnie dodany",
         "edit_user_succes": "Użytkownik został pomyślnie zaaktualizowany",
         "delete_user_succes": "Użytkownik został pomyślnie usunięty",
-
         "first_name": "Imię",
         "last_name": "Nazwisko",
         "email": "Email",
@@ -62,12 +60,10 @@
         "is_active": "Aktywny",
         "last_login": "Ostatnie logowanie",
         "date_joined": "Data dołączenia",
-
         "first_name_validation": "Imię musi mieć co najmniej 2 znaki",
         "last_name_validation": "Nazwisko musi mieć co najmniej 2 znaki",
         "email_validation": "Podaj poprawny adres email",
         "groups_validation": "Wybierz co najmniej jedną grupę",
-
         "first_name_placeholder": "Podaj Imię",
         "last_name_placeholder": "Podaj Nazwisko",
         "email_placeholder": "Podaj Email",
@@ -80,7 +76,6 @@
         "button_add": "Dodaj",
         "button_edit": "Edytuj",
         "button_delete": "Usuń",
-
         "input_global_search": "Szukaj...",
         "input_filter": "Filtruj...",
         "input_search": "Szukaj",
@@ -88,13 +83,21 @@
         "input_date_time": "Wybierz datę i czas",
         "input_multi_select": "Wybierz opcje",
         "input_column_range": "Wybierz kolumny",
-
         "message_success_add": "Rekord został pomyślnie dodany",
-
         "pluralizeColumnOne": "Opcję",
         "pluralizeColumnFew": "Opcje",
         "pluralizeColumnMany": "Opcji",
-
         "lack_of_data": "Brak danych do wyświetlenia"
+    },
+    "analyzer": {
+        "title": "Analiza ryzyka zakupu mieszkania",
+        "subtitle": "Wskaż lokalizację, podaj cenę i metraż – otrzymasz szczegółową ocenę okolicy i ryzyk zakupu",
+        "start_analysis": "Rozpocznij analizę",
+        "how_it_works": "Jak to działa?",
+        "step_location": "Wskaż lokalizację",
+        "step_price": "Cena",
+        "step_area": "Metraż",
+        "analyze_button": "Analizuj lokalizację",
+        "analyzing": "Analizuję..."
     }
 }

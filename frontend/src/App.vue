@@ -1,16 +1,17 @@
-// src/App.vue
 <script setup lang="ts">
-import Toast from 'primevue/toast';
+import { RouterView } from 'vue-router'
 </script>
 
 <template>
-  <Toast position="top-right" />
-  <router-view />
+  <div class="w-full min-h-screen bg-white font-sans">
+    <RouterView />
+  </div>
 </template>
 
 <style>
+@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap');
+
 body {
-  scrollbar-width: thin;
-  scrollbar-color: rgba(141, 139, 139, 0.2) transparent;
+  font-family: 'Poppins', sans-serif;
 }
 </style>

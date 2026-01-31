@@ -1,0 +1,75 @@
+@import "tailwindcss";
+
+/* Transitions */
+.transform-fade-down-enter-active,
+.transform-fade-down-leave-active {
+  @apply transition-all translate-y-0 duration-300;
+}
+.transform-fade-down-enter-from,
+.transform-fade-down-leave-to {
+  @apply opacity-0 -translate-y-2;
+}
+
+.slide-enter-active,
+.slide-leave-active {
+  @apply transition-all duration-300 ease-in-out;
+}
+.slide-enter-from,
+.slide-leave-to {
+  @apply opacity-0 max-h-0;
+}
+.slide-enter-to,
+.slide-leave-from {
+  @apply opacity-100 max-h-96;
+}
+
+/* Utilities */
+.paragraph {
+  @apply text-gray-700 tracking-wide leading-relaxed;
+}
+
+.text-gradient {
+  background: linear-gradient(169.4deg, #3984f4 -6.01%, #0cd3ff 36.87%, #2f7cf0 78.04%, #0e65e8 103.77%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.text-header-gradient {
+  background: linear-gradient(169.4deg, #3984f4 -6.01%, #0cd3ff 36.87%, #2f7cf0 78.04%, #0e65e8 103.77%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.bg-blue-gradient {
+  background: linear-gradient(to right, #468ef9, #0c66ee);
+}
+
+.bg-partner {
+  background: url('@/assets/img/partner/background.png');
+  background-size: cover;
+  background-position: center;
+}
+
+.bg-trading-tools {
+  background: url('@/assets/img/bg-trading-tools.webp');
+  background-size: cover;
+  background-position: center;
+}
+
+/* Remove spinner from number inputs */
+input::-webkit-outer-spin-button,
+input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+input[type="number"] {
+  -moz-appearance: textfield;
+}
+
+/* Shadow box */
+.shadow-box {
+  @apply bg-white rounded-lg shadow-md;
+}

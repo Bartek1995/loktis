@@ -1,0 +1,94 @@
+{
+    "common": {
+        "loading": "Loading...",
+        "error": "An error occurred",
+        "save": "Save",
+        "cancel": "Cancel",
+        "delete": "Delete",
+        "edit": "Edit",
+        "create": "Create",
+        "search": "Search",
+        "yes": "Yes",
+        "no": "No"
+    },
+    "language_switcher": {
+        "title": "Select Language",
+        "english": "English",
+        "polish": "Polish",
+        "german": "German",
+        "french": "French",
+        "spanish": "Spanish"
+    },
+    "form_login": {
+        "title": "Login",
+        "button": "Log In",
+        "username": "Username",
+        "email": "Email",
+        "password": "Password",
+        "hide_password": "Hide Password",
+        "show_password": "Show Password",
+        "required_email": "Email is required",
+        "required_password": "Password is required"
+    },
+    "form": {
+        "save": "Save",
+        "delete": "Delete",
+        "required": "This field is required",
+        "invalidEmail": "Invalid email address",
+        "minLength": "Minimum length is {length} characters",
+        "maxLength": "Maximum length is {length} characters"
+    },
+    "login": {
+        "title": "Login",
+        "button": "Log In",
+        "username": "Username",
+        "password": "Password",
+        "hide_password": "Hide Password",
+        "show_password": "Show Password"
+    },
+    "user": {
+        "add_user": "Add user",
+        "edit_user": "Edit user",
+        "delete_user": "Delete user",
+
+        "add_user_succes": "User has been successfully added",
+        "edit_user_succes": "User has been successfully updated",
+        "delete_user_succes": "User has been successfully deleted",
+
+        "first_name": "First name",
+        "last_name": "Last name",
+        "email": "Email",
+        "groups": "Groups",
+        "is_active": "Active",
+        "last_login": "Last login",
+        "date_joined": "Date joined",
+
+        "first_name_validation": "First name must be at least 2 characters long",
+        "last_name_validation": "Last name must be at least 2 characters long",
+        "email_validation": "Please provide a valid email address",
+        "groups_validation": "Select at least one group",
+
+        "first_name_placeholder": "Enter first name",
+        "last_name_placeholder": "Enter last name",
+        "email_placeholder": "Enter email",
+        "groups_placeholder": "Select groups"
+    },
+    "datatable": {
+        "button_clear_filters": "Clear",
+        "button_apply_filters": "Apply",
+        "button_export": "Export",
+        "button_add": "Add Record",
+        "button_edit": "Edit",
+        "button_delete": "Delete",
+
+        "input_global_search": "Search...",
+        "input_filter": "Filter...",
+        "input_search": "Search",
+        "input_date": "Select date",
+        "input_date_time": "Select date and time",
+        "input_multi_select": "Select options",
+        "input_column_range": "Select columns",
+
+        "message_success_add": "Record has been successfully added"
+    }
+}

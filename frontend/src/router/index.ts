@@ -13,6 +13,12 @@ const routes: Array<RouteRecordRaw> = [
         meta: { title: 'Analizator Ogłoszeń' }
     },
     {
+        path: '/home',
+        name: 'home',
+        component: () => import('@/pages/HomePage.vue'),
+        meta: { title: 'Analizator Ogłoszeń' }
+    },
+    {
         path: '/report',
         name: 'report',
         component: () => import('@/views/analyzer/ReportView.vue'),
@@ -25,22 +31,16 @@ const routes: Array<RouteRecordRaw> = [
         meta: { title: 'Raport analizy' }
     },
     // Auth routes (tymczasowo nieaktywne, przygotowane na przyszłość)
-    {
-        path: '/auth/login',
-        name: 'login',
-        component: () => import('@/views/auth/LoginView.vue'),
-        meta: { title: 'Logowanie' }
-    },
-    {
-        path: '/auth/access-denied',
-        name: 'access-denied',
-        component: () => import('@/views/auth/AccessDeniedView.vue'),
-        meta: { title: 'Brak dostępu' }
-    },
+    // {
+    //     path: '/auth/login',
+    //     name: 'login',
+    //     component: () => import('@/views/auth/LoginView.vue'),
+    //     meta: { title: 'Logowanie' }
+    // },
     {
         path: '/:pathMatch(.*)*',
         name: 'not-found',
-        component: () => import('@/views/auth/NotFoundView.vue'),
+        component: () => import('@/views/NotFoundView.vue'),
         meta: { title: '404' }
     }
 ];
@@ -52,7 +52,7 @@ const router = createRouter({
 
 // Update page title
 router.beforeEach((to, _from, next) => {
-    document.title = (to.meta.title as string) || 'Analizator Ogłoszeń';
+    document.title = (to.meta.title as string) || 'Loktis - Analizator Ogłoszeń';
     next();
 });
 
