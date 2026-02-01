@@ -1,185 +1,232 @@
-# 🏠 Loktis
+# 🌍 Loktis – Location Intelligence Platform
 
-Aplikacja do szybkiej analizy ogłoszeń mieszkaniowych z serwisów **Otodom** i **OLX** z oceną okolicy w oparciu o OpenStreetMap.
+Loktis to narzędzie decyzyjne typu **location intelligence**, które odpowiada na pytanie:
 
-![Vue.js](https://img.shields.io/badge/Vue.js-3.x-4FC08D?logo=vuedotjs)
-![Django](https://img.shields.io/badge/Django-5.2-092E20?logo=django)
-![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6?logo=typescript)
-![License](https://img.shields.io/badge/License-MIT-blue)
+> **„Czy ta lokalizacja jest dobra do życia lub inwestowania — dziś i w perspektywie 3–5 lat?”**
 
-## ✨ Funkcjonalności
+W przeciwieństwie do klasycznych portali nieruchomości:
+- nie promujemy ogłoszeń,
+- nie optymalizujemy pod kliknięcia,
+- **wydajemy werdykt oparty na danych**.
 
-- **📊 Parsowanie ogłoszeń** - automatyczne pobieranie danych z Otodom i OLX (tytuł, cena, metraż, pokoje, piętro, lokalizacja, zdjęcia)
-- **🗺️ Analiza okolicy** - integracja z OpenStreetMap/Overpass API dla POI w konfigurowalnym promieniu (250-1000m)
-- **📈 Scoring okolicy** - automatyczna ocena infrastruktury z podziałem na kategorie:
-  - 🛒 Sklepy | 🚌 Transport | 🎓 Edukacja | 🏥 Zdrowie | 🌳 Rekreacja | 🍽️ Gastronomia | 🏦 Finanse
-- **🔇 Quiet Score** - ocena poziomu ciszy/hałasu na podstawie obecności głośnych obiektów
-- **🚦 Analiza Ruchu Drogowego** - wykrywanie tras szybkiego ruchu i torowisk z oceną wpływu na hałas
-- **🗺️ Interaktywna mapa** - Leaflet lub Google Maps (przełączalne) z kolorowymi markerami POI
-- **⚡ Streaming w czasie rzeczywistym** - aktualizacje statusu podczas analizy (NDJSON)
-- **📝 Raport z analizy** - TL;DR (3 plusy + 3 ryzyka), szczegóły ogłoszenia, mapa POI, Galeria FullScreen
+Nie oceniamy mieszkania.  
+**Oceniamy ryzyko i potencjał lokalizacji.**
 
-## ⚙️ Wymagania Środowiskowe
+---
 
-Przed uruchomieniem utwórz plik `.env` w głównym katalogu (lub skorzystaj z `.env.example`):
+## ✅ Aktualny stan projektu (MVP)
 
-```ini
-# Backend
-GEMINI_API_KEY=twoj_klucz_ai
-SECRET_KEY=twoj_klucz_django  # Wymagane na produkcji!!!
-DEBUG=True                    # False na produkcji
-ALLOWED_HOSTS=localhost,127.0.0.1
+### 1. Location-First Analysis
+**Status:** ✅ ZAIMPLEMENTOWANE  
+**Ciężkość wdrożenia:** 🟢 Niska (gotowe)
 
-# Frontend
-VITE_GOOGLE_MAPS_API_KEY=twoj_klucz_google  # Opcjonalne (dla map Google)
-VITE_API_URL=http://localhost:8000/api
-```
+- Klik na mapie → cena / metraż → raport
+- Flow w pełni *location-first* (bez zależności od ogłoszeń)
+- Streaming NDJSON (real-time feedback)
 
-## 🏗️ Architektura
+**Wartość biznesowa:**  
+To fundament projektu i główna przewaga nad portalami nieruchomości.
 
-### Backend (Django 5.2 + DRF)
+---
 
-```
-backend/
-├── listing_analyzer/
-│   ├── providers/           # Parsery ogłoszeń
-│   │   ├── base.py          # Bazowy provider
-│   │   ├── otodom.py        # Parser Otodom
-│   │   ├── olx.py           # Parser OLX
-│   │   └── registry.py      # Rejestr providerów
-│   ├── geo/                 # Analiza geograficzna
-│   │   ├── overpass_client.py   # Klient Overpass API
-│   │   └── poi_analyzer.py      # Scoring okolicy + Quiet Score
-│   ├── models.py            # Model AnalysisResult
-│   ├── views.py             # Endpointy API (w tym streaming)
-│   ├── services.py          # Główny serwis analizy
-│   ├── report_builder.py    # Budowanie raportów
-│   ├── cache.py             # In-memory cache TTL
-│   ├── rate_limiter.py      # Rate limiting
-│   └── urls.py              # Routing
-└── project_config/
-    ├── settings.py
-    └── urls.py
-```
+### 2. Advanced Location Scoring (POI Intelligence)
+**Status:** ✅ ZAIMPLEMENTOWANE  
+**Ciężkość wdrożenia:** 🟡 Średnia
 
-### Frontend (Vue 3 + TypeScript + PrimeVue + Leaflet)
+- Integracja z Overpass API (cache 24h)
+- Analiza POI w promieniu 500–1000 m
+- Kategorie z wagami:
 
-```
-frontend/src/
-├── api/
-│   └── analyzerApi.ts       # Klient API + streaming
-├── views/
-│   └── analyzer/
-│       ├── LandingView.vue  # Strona główna z formularzem + radius toggle
-│       └── ReportView.vue   # Wyświetlanie raportu + mapa Leaflet
-├── router/
-│   └── index.ts
-└── App.vue
-```
+| Kategoria | Status | Uwagi |
+|---------|------|------|
+| Sklepy | ✅ | poprawne |
+| Transport publiczny | ✅ | kluczowe |
+| Edukacja | ✅ | krytyczne dla rodzin |
+| Zdrowie | ✅ | niedoszacowane przez rynek |
+| Zieleń | ✅ | silny argument sprzedażowy |
+| Sport / rekreacja | ✅ | uzupełniające |
+| Gastronomia | ✅ | city-life |
+| Finanse | ✅ | najmniej istotne |
 
-## 🚀 Uruchomienie
+**Brak:** interpretacji i werdyktu (patrz sekcja raportowa).
 
-### Backend
+---
 
-```powershell
-cd backend
+### 3. Quiet Score 2.0 (Noise Intelligence)
+**Status:** ✅ ZAIMPLEMENTOWANE  
+**Ciężkość wdrożenia:** 🟡 Średnia
 
-# Aktywuj venv
-.\venv\Scripts\Activate.ps1
+Analiza źródeł hałasu:
+- drogi szybkiego ruchu,
+- arterie miejskie,
+- tramwaje i kolej,
+- przystanki <100 m,
+- życie nocne.
 
-# Zainstaluj zależności
-pip install -r requirements.txt
+**Output:** skala 0–100  
+**Wartość:** jeden z najmocniejszych wyróżników produktu w Polsce.
 
-# Migracje
-python manage.py makemigrations listing_analyzer
-python manage.py migrate
+---
 
-# Uruchom serwer
-python manage.py runserver 0.0.0.0:8000
-```
+### 4. TL;DR Decision Generator
+**Status:** ✅ ZAIMPLEMENTOWANE  
+**Ciężkość wdrożenia:** 🟢 Niska
 
-### Frontend
+- 3 największe plusy
+- 3 największe minusy
+- Cena za m² vs średnia
+- Infrastruktura
+- Quiet Score
 
-```powershell
-cd frontend
+**Brak:** jednoznacznego werdyktu („polecane / warunkowo / niepolecane”).
 
-# Zainstaluj zależności
-npm install
+---
 
-# Uruchom dev server
-npm run dev
-```
+### 5. Frontend (Vue 3)
+**Status:** ✅ ZAIMPLEMENTOWANE  
+**Ciężkość wdrożenia:** 🟡 Średnia
 
-**Aplikacja dostępna pod:**
-- 🌐 Frontend: http://localhost:5173
-- 🔌 Backend API: http://localhost:8000/api/
+- Location picker (Leaflet)
+- Live progress analizy
+- Widok raportu
+- Historia analiz
 
-## 📡 API Endpoints
+Frontend wystarczający do sprzedaży MVP.
 
-| Metoda | Endpoint | Opis |
-|--------|----------|------|
-| `POST` | `/api/analyze/` | Analizuje ogłoszenie (streaming NDJSON) |
-| `POST` | `/api/validate-url/` | Waliduje URL przed analizą |
-| `GET` | `/api/providers/` | Lista obsługiwanych serwisów |
-| `GET` | `/api/history/` | Historia analiz |
-| `GET` | `/api/history/{id}/` | Szczegóły analizy |
-| `GET` | `/api/history/{id}/report/` | Pełny raport z historii |
-| `GET` | `/api/history/recent/` | Ostatnie 10 analiz |
+---
 
-### Przykład request do analizy
+### 6. Backend (Django 5.2)
+**Status:** ✅ ZAIMPLEMENTOWANE  
+**Ciężkość wdrożenia:** 🟡 Średnia
 
-```json
-POST /api/analyze/
-{
-  "url": "https://www.otodom.pl/pl/oferta/...",
-  "radius": 500,
-  "use_cache": true
-}
-```
+- Model `LocationAnalysis` z `public_id`
+- Cache TTL (Overpass 24h, listingi 1h)
+- Rate limiting
+- Architektura Services / Providers
+- Endpointy:
+  - `POST /api/analyze-location/`
+  - `GET /api/report/{public_id}/`
+  - `GET /api/history/`
 
-### Streaming response (NDJSON)
+---
 
-```json
-{"status": "validating", "message": "Walidacja URL..."}
-{"status": "parsing", "message": "Pobieranie ogłoszenia..."}
-{"status": "map", "message": "Analiza mapy (promień 500m)..."}
-{"status": "calculating", "message": "Obliczanie wyników..."}
-{"status": "generating", "message": "Generowanie raportu końcowego..."}
-{"status": "complete", "result": {...}}
-```
+## 🚧 Brakujące elementy krytyczne (High Impact)
 
-## ⚙️ Konfiguracja
+### 7. Profile użytkownika (Personas)
+**Status:** ❌ BRAK  
+**Ciężkość wdrożenia:** 🟡 Średnia  
+**Impact:** 🔥 WYSOKI
 
-### Rate Limiting
-- 5 requestów / minuta
-- 30 requestów / godzina
+Profile:
+- Rodzina (cisza, szkoły, zieleń)
+- Singiel / City Life (transport, gastro)
+- Inwestor (płynność, ROI, studenci)
 
-### Cache TTL
-- Wyniki parsowania: **1 godzina**
-- Dane z Overpass API: **24 godziny**
+Zmieniają:
+- wagi scoringu,
+- narrację raportu,
+- końcowy werdykt.
 
-### Promień analizy
-- Minimum: 250m
-- Maximum: 1000m
-- Domyślnie: 500m
+---
 
-## 📦 Technologie
+### 8. Dynamiczne wagi (Custom Scoring)
+**Status:** ❌ BRAK  
+**Ciężkość wdrożenia:** 🟡 Średnia  
+**Impact:** 🔥 WYSOKI
 
-| Warstwa | Technologia |
-|---------|-------------|
-| Frontend | Vue 3, TypeScript, PrimeVue, Tailwind CSS, Leaflet |
-| Backend | Django 5.2, Django REST Framework, BeautifulSoup4 |
-| Mapy | Leaflet, OpenStreetMap, Overpass API |
-| Build | Vite, npm |
+- Suwaki wag kategorii
+- Przeliczanie score bez ponownego Overpass
+- Poczucie kontroli po stronie użytkownika
 
-## ⚠️ Uwagi
+---
 
-- Scraping może być niestabilny - serwisy mogą zmieniać strukturę HTML
-- Aplikacja zwraca partial result nawet gdy niektóre dane się nie pobiorą
-- Dane z OpenStreetMap mogą być niekompletne dla niektórych lokalizacji
-- Analiza ma charakter poglądowy i nie zastępuje własnej weryfikacji
-- Quiet Score bazuje na obecności potencjalnie głośnych obiektów (bary, kluby, główne drogi)
+### 9. Weredykt decyzyjny (Decision Verdict)
+**Status:** ❌ BRAK  
+**Ciężkość wdrożenia:** 🟢 Niska  
+**Impact:** 🔥🔥 BARDZO WYSOKI
 
-## 📄 Licencja
+Jednoznaczny output:
+- ✅ Polecane
+- ⚠️ Warunkowo polecane
+- ❌ Niepolecane
 
-MIT License
+Z uzasadnieniem opartym na danych.
+
+---
+
+## 🧠 Sekcje raportowe „WOW” (publiczne dane)
+
+### 10. Ukryte ryzyka lokalizacji
+**Status:** ❌ BRAK  
+**Ciężkość wdrożenia:** 🟡 Średnia  
+**Źródła:** dane publiczne
+
+- Strefy hałasu (mapy akustyczne UE)
+- Planowane drogi / linie kolejowe
+- Lotniska w promieniu 10 km
+- Strefy zalewowe (ISOK)
+
+---
+
+### 11. Jakość życia w czasie (3–5 lat)
+**Status:** ❌ BRAK  
+**Ciężkość wdrożenia:** 🟡 Średnia  
+**Źródła:** GUS
+
+- Trendy demograficzne mikro
+- Starzenie się / napływ rodzin
+- Charakter dzielnicy (tranzytowa vs osiadła)
+
+---
+
+### 12. Edukacja i infrastruktura społeczna
+**Status:** ❌ BRAK  
+**Ciężkość wdrożenia:** 🟡 Średnia  
+**Źródła:** dane gmin / MEN
+
+- Obłożenie szkół i przedszkoli
+- Ryzyko braku miejsc
+
+---
+
+### 13. Środowisko i zdrowie
+**Status:** ❌ BRAK  
+**Ciężkość wdrożenia:** 🟢–🟡  
+**Źródła:** GIOŚ
+
+- Historyczna jakość powietrza (PM2.5 / PM10)
+- Sezonowość smogu
+
+---
+
+### 14. Nasłonecznienie i ekspozycja
+**Status:** ❌ BRAK  
+**Ciężkość wdrożenia:**  
+- 🟢 Prosta heurystyka  
+- 🔴 Zaawansowana analiza cieni
+
+---
+
+## 💰 Monetyzacja (rekomendowana)
+
+- 1 darmowy raport (bez ceny m²)
+- Kolejne raporty:
+  - 9–19 PLN / raport
+  - pakiety (5 / 10)
+- Płatności: Przelewy24 + BLIK
+- Raport jako **produkt decyzyjny**, nie SaaS
+
+---
+
+## 🎯 Priorytety wdrożeniowe
+
+1. Weredykt decyzyjny
+2. Profile użytkownika
+3. Ukryte ryzyka lokalizacji
+4. Custom scoring (suwaki)
+5. Nasłonecznienie
+6. Konta użytkowników (dopiero po PMF)
+
+---
+
+> „Ten raport ma wskazać ryzyka, których nie widać podczas 15-minutowego spaceru po okolicy.”
