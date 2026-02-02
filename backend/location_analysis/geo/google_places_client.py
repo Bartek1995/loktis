@@ -147,14 +147,27 @@ class GooglePlacesClient:
         
         # Deduplikacja i limitowanie
         for cat in pois_by_category:
-            # Deduplikacja po place_id (lub name+distance jako fallback)
-            seen = set()
+            # Deduplikacja: place_id (primary) > name+distance_bucket (fallback)
+            seen_place_ids = set()
+            seen_fallback = set()
             unique_pois = []
+            
             for poi in pois_by_category[cat]:
-                key = (poi.name, round(poi.distance_m, 0))
-                if key not in seen:
-                    seen.add(key)
-                    unique_pois.append(poi)
+                place_id = poi.tags.get('place_id')
+                
+                # Primary: dedupe po place_id
+                if place_id:
+                    if place_id in seen_place_ids:
+                        continue
+                    seen_place_ids.add(place_id)
+                else:
+                    # Fallback: name + distance bucket (~20m)
+                    fallback_key = (poi.name.lower(), round(poi.distance_m / 20) * 20)
+                    if fallback_key in seen_fallback:
+                        continue
+                    seen_fallback.add(fallback_key)
+                
+                unique_pois.append(poi)
             
             # Sortuj i limituj
             unique_pois.sort(key=lambda p: p.distance_m)
@@ -257,6 +270,95 @@ class GooglePlacesClient:
         c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
         
         return R * c
+    
+    # ===== METODY DLA HYBRID ENRICHMENT =====
+    
+    FIND_PLACE_URL = "https://maps.googleapis.com/maps/api/place/findplacefromtext/json"
+    PLACE_DETAILS_URL = "https://maps.googleapis.com/maps/api/place/details/json"
+    
+    def find_place_details(
+        self,
+        name: str,
+        lat: float,
+        lon: float,
+        search_radius: int = 100,
+        fields: List[str] = None
+    ) -> Optional[dict]:
+        """
+        Znajduje miejsce używając Nearby Search + keyword, potem Place Details.
+        Znacznie dokładniejsze niż text search - szuka w małym promieniu od POI.
+        
+        Args:
+            name: Nazwa POI (np. "Biedronka")
+            lat, lon: Lokalizacja POI z OSM
+            search_radius: Promień wyszukiwania (domyślnie 100m)
+            fields: Pola do pobrania z Details
+        
+        Returns:
+            dict z rating, user_ratings_total, geometry, place_id lub None
+        """
+        if not self.api_key:
+            return None
+        
+        fields = fields or ['rating', 'user_ratings_total', 'geometry', 'place_id']
+        
+        try:
+            # 1. Nearby Search z keyword - szukamy w małym promieniu od POI
+            place_id = self._find_nearby_by_keyword(name, lat, lon, search_radius)
+            if not place_id:
+                return None
+            
+            # 2. Place Details - pobierz rating/reviews + geometry
+            return self._get_place_details(place_id, fields)
+            
+        except Exception as e:
+            logger.warning(f"find_place_details error for '{name}': {e}")
+            return None
+    
+    def _find_nearby_by_keyword(
+        self, 
+        keyword: str, 
+        lat: float, 
+        lon: float, 
+        radius: int = 100
+    ) -> Optional[str]:
+        """
+        Szuka miejsca przez Nearby Search z keyword.
+        Zwraca place_id najbliższego wyniku.
+        """
+        params = {
+            'location': f"{lat},{lon}",
+            'radius': radius,
+            'keyword': keyword,
+            'key': self.api_key,
+        }
+        
+        response = requests.get(self.NEARBY_SEARCH_URL, params=params, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+        
+        if data.get('status') == 'OK' and data.get('results'):
+            # Zwróć najbliższy wynik (pierwszy z listy - API sortuje po relevance/distance)
+            return data['results'][0].get('place_id')
+        
+        return None
+    
+    def _get_place_details(self, place_id: str, fields: List[str]) -> Optional[dict]:
+        """Pobiera szczegóły miejsca z Place Details API."""
+        params = {
+            'place_id': place_id,
+            'fields': ','.join(fields),
+            'key': self.api_key,
+        }
+        
+        response = requests.get(self.PLACE_DETAILS_URL, params=params, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+        
+        if data.get('status') == 'OK' and data.get('result'):
+            return data['result']
+        
+        return None
     
     def _empty_result(self) -> Tuple[Dict[str, List[POI]], Dict[str, Any]]:
         """Zwraca pustą strukturę wyników."""

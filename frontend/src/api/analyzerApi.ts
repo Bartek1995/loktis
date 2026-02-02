@@ -271,7 +271,7 @@ export const analyzerApi = {
     referenceUrl?: string,
     onStatus?: (event: { status: string; message?: string; result?: AnalysisReport; error?: string }) => void,
     userProfile: 'family' | 'urban' | 'investor' = 'family',
-    poiProvider: 'overpass' | 'google' = 'overpass'
+    poiProvider: 'overpass' | 'google' | 'hybrid' = 'hybrid'
   ): Promise<AnalysisReport> {
     const body: Record<string, unknown> = { 
       latitude: lat, 

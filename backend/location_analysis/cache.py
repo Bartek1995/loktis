@@ -109,3 +109,12 @@ class TTLCache:
 # Globalne instancje cache
 listing_cache = TTLCache(default_ttl=3600, max_size=500)  # 1h dla ogłoszeń
 overpass_cache = TTLCache(default_ttl=86400, max_size=200)  # 24h dla POI
+google_details_cache = TTLCache(default_ttl=604800, max_size=2000)  # 7 dni dla Google Details
+
+
+def normalize_coords(lat: float, lon: float, precision: int = 4) -> tuple:
+    """
+    Normalizuje współrzędne do siatki dla lepszego cache hit rate.
+    Precision=4 => ~11m siatka, precision=5 => ~1m siatka.
+    """
+    return (round(lat, precision), round(lon, precision))

@@ -33,7 +33,7 @@ const areaSqm = ref<number | null>(null)
 const referenceUrl = ref('')
 const radius = ref(500)
 const userProfile = ref<'family' | 'urban' | 'investor'>('family')
-const poiProvider = ref<'overpass' | 'google'>('overpass')
+const poiProvider = ref<'overpass' | 'google' | 'hybrid'>('hybrid')
 
 // UI State
 const isLoading = ref(false)
@@ -616,28 +616,39 @@ loadRecentAnalyses()
                   <!-- POI Provider Toggle -->
                   <div class="flex items-center gap-4 pt-2 border-t border-gray-200">
                     <span class="text-sm font-medium text-gray-600">Źródło POI:</span>
-                    <div class="flex gap-2">
+                    <div class="flex gap-2 flex-wrap">
+                      <button
+                        @click="poiProvider = 'hybrid'"
+                        :class="[
+                          'px-3 py-2 rounded-lg font-medium transition-all flex items-center gap-1 text-sm',
+                          poiProvider === 'hybrid' 
+                            ? 'bg-purple-500 text-white shadow-md' 
+                            : 'bg-white text-gray-600 border border-gray-200 hover:border-purple-500'
+                        ]"
+                      >
+                        ⚡ Hybrid
+                      </button>
                       <button
                         @click="poiProvider = 'overpass'"
                         :class="[
-                          'px-4 py-2 rounded-lg font-medium transition-all flex items-center gap-2',
+                          'px-3 py-2 rounded-lg font-medium transition-all flex items-center gap-1 text-sm',
                           poiProvider === 'overpass' 
                             ? 'bg-green-500 text-white shadow-md' 
                             : 'bg-white text-gray-600 border border-gray-200 hover:border-green-500'
                         ]"
                       >
-                        🗺️ OpenStreetMap
+                        🗺️ OSM
                       </button>
                       <button
                         @click="poiProvider = 'google'"
                         :class="[
-                          'px-4 py-2 rounded-lg font-medium transition-all flex items-center gap-2',
+                          'px-3 py-2 rounded-lg font-medium transition-all flex items-center gap-1 text-sm',
                           poiProvider === 'google' 
                             ? 'bg-blue-500 text-white shadow-md' 
                             : 'bg-white text-gray-600 border border-gray-200 hover:border-blue-500'
                         ]"
                       >
-                        🔵 Google Places
+                        🔵 Google
                       </button>
                     </div>
                   </div>

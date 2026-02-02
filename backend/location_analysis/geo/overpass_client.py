@@ -225,13 +225,13 @@ class OverpassClient:
         out center;
         """
         
-        # 2. Wyślij request (z Retry Logic)
+        # 2. Wyślij request (z Retry Logic + Exponential Backoff)
+        import random
         elements = []
-        max_retries = 3
+        max_retries = 4
         
         for attempt in range(max_retries):
             try:
-                # print(f"DEBUG: Wysyłam Batch Request do {self._get_endpoint()} (próba {attempt+1})")
                 response = requests.post(
                     self._get_endpoint(),
                     data={'data': overpass_query},
@@ -245,11 +245,15 @@ class OverpassClient:
                 break # Sukces
                 
             except (requests.RequestException, ValueError) as e:
-                print(f"WARN: Batch Request failed on {self._get_endpoint()}: {e}")
+                print(f"WARN: Overpass request failed on {self._get_endpoint()}: {e}")
                 self._rotate_endpoint()
-                time.sleep(1)
                 
-                if attempt == max_retries - 1:
+                if attempt < max_retries - 1:
+                    # Exponential backoff: 1s, 2s, 4s + random jitter 0-500ms
+                    backoff = (2 ** attempt) + random.uniform(0, 0.5)
+                    print(f"INFO: Retrying in {backoff:.1f}s (attempt {attempt+2}/{max_retries})...")
+                    time.sleep(backoff)
+                else:
                     print("ERROR: Wszystkie próby pobrania danych nie powiodły się.")
                     # Zwracamy puste wyniki (fail gracefully)
                     empty_metrics = NatureMetrics()
@@ -425,18 +429,28 @@ class OverpassClient:
         if not subcategory_pl:
             subcategory_pl = subcategory.replace('_', ' ').capitalize()
         
-        # Fallback nazwy
+        # Fallback nazwy - generuj z typu + adres
         if not name:
-            # DEBUG: Loguj (z filtrem spamu - tylko land cover bez nazwy)
-            is_spam = (category == 'nature' and subcategory in ['grass', 'meadow', 'forest', 'wood', 'basin']) or \
-                      (category == 'roads' and subcategory in ['tram', 'rail'])
-            if not is_spam:
-                print(f"DEBUG: Nameless POI found | Category: {category} | Type: {subcategory} | Tags: {tags}")
+            # Zbierz adres jeśli dostępny
+            street = tags.get('addr:street', '')
+            housenumber = tags.get('addr:housenumber', '')
+            address_part = ''
+            if street:
+                address_part = f" ({street}"
+                if housenumber:
+                    address_part += f" {housenumber}"
+                address_part += ")"
             
+            # Generuj nazwę: "Typ (ulica nr)" lub tylko "Typ"
             if subcategory_pl:
-                name = subcategory_pl.capitalize()
+                name = subcategory_pl.capitalize() + address_part
+            elif address_part:
+                name = f"Obiekt{address_part}"
             else:
                 name = "Obiekt bez nazwy"
+            
+            # Oznacz jako bezimienne dla niższego priorytetu w raporcie
+            tags['_nameless'] = True
 
         distance = self._haversine_distance(ref_lat, ref_lon, lat, lon)
         

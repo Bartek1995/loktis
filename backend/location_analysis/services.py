@@ -6,9 +6,9 @@ import logging
 from typing import Optional, Dict, Any
 
 from .providers import get_provider_for_url, ProviderRegistry, PropertyData
-from .geo import OverpassClient, GooglePlacesClient, POIAnalyzer
+from .geo import OverpassClient, GooglePlacesClient, HybridPOIProvider, POIAnalyzer
 from .report_builder import ReportBuilder, AnalysisReport
-from .cache import listing_cache, overpass_cache, TTLCache
+from .cache import listing_cache, overpass_cache, TTLCache, normalize_coords
 from .models import LocationAnalysis
 from .personas import get_persona_by_string, PersonaType
 from .scoring import ScoringEngine, VerdictGenerator
@@ -27,6 +27,10 @@ class AnalysisService:
     def __init__(self):
         self.overpass_client = OverpassClient()
         self.google_places_client = GooglePlacesClient()
+        self.hybrid_provider = HybridPOIProvider(
+            overpass_client=self.overpass_client,
+            google_client=self.google_places_client
+        )
         self.poi_analyzer = POIAnalyzer()
         self.report_builder = ReportBuilder()
     
@@ -269,27 +273,32 @@ class AnalysisService:
         lon: float,
         radius: int,
         use_cache: bool,
-        provider: str = 'overpass'
+        provider: str = 'hybrid' # Changed default provider to 'hybrid'
     ) -> tuple:
         """
         Pobiera POI i metryki (z cache jeśli dostępne).
         
         Args:
-            provider: 'overpass' lub 'google'
+            provider: 'overpass', 'google', lub 'hybrid' (domyślny) # Updated docstring
         
         Returns:
             tuple: (pois_by_category, metrics)
         """
-        cache_key = TTLCache.make_key('pois', lat, lon, radius, provider)
+        # Normalizuj koordynaty dla lepszego cache hit rate (~11m grid)
+        norm_lat, norm_lon = normalize_coords(lat, lon, precision=4)
+        cache_key = TTLCache.make_key('pois', norm_lat, norm_lon, radius, provider)
         
         if use_cache:
             cached = overpass_cache.get(cache_key)
             if cached:
-                logger.info(f"POI z cache ({provider}): ({lat}, {lon}) r={radius}")
+                logger.info(f"POI z cache ({provider}): ({norm_lat}, {norm_lon}) r={radius}")
                 return cached
         
         # Wybór klienta
-        if provider == 'google':
+        if provider == 'hybrid': # Added hybrid provider logic
+            logger.info(f"Pobieranie POI HYBRID (Overpass + Google enrichment): ({lat}, {lon}) r={radius}")
+            pois, metrics = self.hybrid_provider.get_pois_hybrid(lat, lon, radius)
+        elif provider == 'google':
             logger.info(f"Pobieranie POI z Google Places: ({lat}, {lon}) r={radius}")
             pois, metrics = self.google_places_client.get_pois_around(lat, lon, radius)
         else:
