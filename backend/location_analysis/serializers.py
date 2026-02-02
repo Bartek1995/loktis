@@ -74,6 +74,12 @@ class AnalyzeLocationRequestSerializer(serializers.Serializer):
         default='family',
         help_text="Profil użytkownika (family, urban, investor)"
     )
+    poi_provider = serializers.ChoiceField(
+        choices=['overpass', 'google'],
+        required=False,
+        default='overpass',
+        help_text="Dostawca POI (overpass, google)"
+    )
 
 
 

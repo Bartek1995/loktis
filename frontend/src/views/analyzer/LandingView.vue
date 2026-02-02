@@ -33,6 +33,7 @@ const areaSqm = ref<number | null>(null)
 const referenceUrl = ref('')
 const radius = ref(500)
 const userProfile = ref<'family' | 'urban' | 'investor'>('family')
+const poiProvider = ref<'overpass' | 'google'>('overpass')
 
 // UI State
 const isLoading = ref(false)
@@ -214,7 +215,8 @@ async function handleAnalyze() {
           else loadingProgress.value = Math.min(loadingProgress.value + 10, 95)
         }
       },
-      userProfile.value
+      userProfile.value,
+      poiProvider.value
     )
     
     loadingProgress.value = 100
@@ -607,6 +609,35 @@ loadRecentAnalyses()
                         ]"
                       >
                         {{ option.label }}
+                      </button>
+                    </div>
+                  </div>
+                  
+                  <!-- POI Provider Toggle -->
+                  <div class="flex items-center gap-4 pt-2 border-t border-gray-200">
+                    <span class="text-sm font-medium text-gray-600">Źródło POI:</span>
+                    <div class="flex gap-2">
+                      <button
+                        @click="poiProvider = 'overpass'"
+                        :class="[
+                          'px-4 py-2 rounded-lg font-medium transition-all flex items-center gap-2',
+                          poiProvider === 'overpass' 
+                            ? 'bg-green-500 text-white shadow-md' 
+                            : 'bg-white text-gray-600 border border-gray-200 hover:border-green-500'
+                        ]"
+                      >
+                        🗺️ OpenStreetMap
+                      </button>
+                      <button
+                        @click="poiProvider = 'google'"
+                        :class="[
+                          'px-4 py-2 rounded-lg font-medium transition-all flex items-center gap-2',
+                          poiProvider === 'google' 
+                            ? 'bg-blue-500 text-white shadow-md' 
+                            : 'bg-white text-gray-600 border border-gray-200 hover:border-blue-500'
+                        ]"
+                      >
+                        🔵 Google Places
                       </button>
                     </div>
                   </div>

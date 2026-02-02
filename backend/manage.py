@@ -14,7 +14,23 @@ try:
     elif root_env.exists():
         load_dotenv(root_env)
 except ImportError:
-    pass  # python-dotenv not installed, env vars must be set manually
+    # Fallback: Manual parsing if python-dotenv is missing or failing
+    def load_env_manual(path):
+        if not path.exists(): return
+        with open(path) as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith('#') or '=' not in line: continue
+                k, v = line.split('=', 1)
+                os.environ.setdefault(k.strip(), v.strip().strip("'").strip('"'))
+
+    local_env = Path(__file__).resolve().parent / '.env'
+    root_env = Path(__file__).resolve().parent.parent / '.env'
+    
+    if local_env.exists():
+        load_env_manual(local_env)
+    elif root_env.exists():
+        load_env_manual(root_env)
 
 
 def main():

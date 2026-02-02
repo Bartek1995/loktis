@@ -270,7 +270,8 @@ export const analyzerApi = {
     radius: number,
     referenceUrl?: string,
     onStatus?: (event: { status: string; message?: string; result?: AnalysisReport; error?: string }) => void,
-    userProfile: 'family' | 'urban' | 'investor' = 'family'
+    userProfile: 'family' | 'urban' | 'investor' = 'family',
+    poiProvider: 'overpass' | 'google' = 'overpass'
   ): Promise<AnalysisReport> {
     const body: Record<string, unknown> = { 
       latitude: lat, 
@@ -279,7 +280,8 @@ export const analyzerApi = {
       area_sqm: areaSqm,
       address,
       radius,
-      user_profile: userProfile
+      user_profile: userProfile,
+      poi_provider: poiProvider
     };
     if (referenceUrl) {
       body.reference_url = referenceUrl;

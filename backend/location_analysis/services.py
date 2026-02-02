@@ -6,7 +6,7 @@ import logging
 from typing import Optional, Dict, Any
 
 from .providers import get_provider_for_url, ProviderRegistry, PropertyData
-from .geo import OverpassClient, POIAnalyzer
+from .geo import OverpassClient, GooglePlacesClient, POIAnalyzer
 from .report_builder import ReportBuilder, AnalysisReport
 from .cache import listing_cache, overpass_cache, TTLCache
 from .models import LocationAnalysis
@@ -26,6 +26,7 @@ class AnalysisService:
     
     def __init__(self):
         self.overpass_client = OverpassClient()
+        self.google_places_client = GooglePlacesClient()
         self.poi_analyzer = POIAnalyzer()
         self.report_builder = ReportBuilder()
     
@@ -120,6 +121,7 @@ class AnalysisService:
         radius: int = 500,
         reference_url: str = None,
         user_profile: str = 'family',
+        poi_provider: str = 'overpass',
     ):
         """
         Generator analizy lokalizacji (location-first model).
@@ -160,8 +162,9 @@ class AnalysisService:
             verdict = None
             
             try:
-                yield json.dumps({'status': 'map', 'message': f'Analiza mapy (promień {radius}m)...'}) + '\n'
-                pois, metrics = self._get_pois(lat, lon, radius, use_cache=True)
+                provider_label = 'Google Places' if poi_provider == 'google' else 'Overpass'
+                yield json.dumps({'status': 'map', 'message': f'Analiza mapy ({provider_label}, promień {radius}m)...'}) + '\n'
+                pois, metrics = self._get_pois(lat, lon, radius, use_cache=True, provider=poi_provider)
                 
                 yield json.dumps({'status': 'calculating', 'message': 'Obliczanie scoringu bazowego...'}) + '\n'
                 # 1. Najpierw standardowa analiza POI (surowe score'y)
@@ -265,26 +268,33 @@ class AnalysisService:
         lat: float,
         lon: float,
         radius: int,
-        use_cache: bool
+        use_cache: bool,
+        provider: str = 'overpass'
     ) -> tuple:
         """
         Pobiera POI i metryki (z cache jeśli dostępne).
         
+        Args:
+            provider: 'overpass' lub 'google'
+        
         Returns:
             tuple: (pois_by_category, metrics)
         """
-        cache_key = TTLCache.make_key('pois', lat, lon, radius)
+        cache_key = TTLCache.make_key('pois', lat, lon, radius, provider)
         
         if use_cache:
             cached = overpass_cache.get(cache_key)
             if cached:
-                logger.info(f"POI z cache: ({lat}, {lon}) r={radius}")
+                logger.info(f"POI z cache ({provider}): ({lat}, {lon}) r={radius}")
                 return cached
         
-        logger.info(f"Pobieranie POI z Overpass: ({lat}, {lon}) r={radius}")
-        pois, metrics = self.overpass_client.get_pois_around(
-            lat, lon, radius
-        )
+        # Wybór klienta
+        if provider == 'google':
+            logger.info(f"Pobieranie POI z Google Places: ({lat}, {lon}) r={radius}")
+            pois, metrics = self.google_places_client.get_pois_around(lat, lon, radius)
+        else:
+            logger.info(f"Pobieranie POI z Overpass: ({lat}, {lon}) r={radius}")
+            pois, metrics = self.overpass_client.get_pois_around(lat, lon, radius)
         
         result = (pois, metrics)
         if use_cache:
