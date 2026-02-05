@@ -32,7 +32,7 @@ const price = ref<number | null>(null)
 const areaSqm = ref<number | null>(null)
 const referenceUrl = ref('')
 const radius = ref(500)
-const userProfile = ref<'family' | 'urban' | 'investor'>('family')
+const profileKey = ref<string>('family')  // Nowy system profili
 const poiProvider = ref<'overpass' | 'google' | 'hybrid'>('hybrid')
 
 // UI State
@@ -59,28 +59,49 @@ const loadingSteps = [
   { status: 'Generowanie raportu...', progress: 90 },
 ]
 
-// Profile options
+// Profile options - 6 profili z nowego systemu
 const profileOptions = [
-  { 
-    value: 'family' as const, 
-    emoji: '👨‍👩‍👧', 
-    name: 'Rodzina z dziećmi',
-    description: 'Priorytet: szkoły, przedszkola, zieleń, cisza',
-    color: 'from-emerald-400 to-teal-500'
-  },
   { 
     value: 'urban' as const, 
     emoji: '🏙️', 
-    name: 'Singiel / Para',
-    description: 'Priorytet: transport, gastronomia, rozrywka',
+    name: 'City Life',
+    description: 'Transport, gastronomia, życie nocne',
     color: 'from-blue-400 to-indigo-500'
   },
   { 
-    value: 'investor' as const, 
-    emoji: '📈', 
-    name: 'Inwestor',
-    description: 'Priorytet: płynność najmu, ROI, lokalizacja',
-    color: 'from-amber-400 to-orange-500'
+    value: 'family' as const, 
+    emoji: '👨‍👩‍👧‍👦', 
+    name: 'Rodzina z dziećmi',
+    description: 'Szkoły, zdrowie, park, cisza',
+    color: 'from-emerald-400 to-teal-500'
+  },
+  { 
+    value: 'quiet_green' as const, 
+    emoji: '🌿', 
+    name: 'Spokojnie i zielono',
+    description: 'Cisza, zieleń, mniej usług',
+    color: 'from-green-400 to-lime-500'
+  },
+  { 
+    value: 'remote_work' as const, 
+    emoji: '💻', 
+    name: 'Home Office',
+    description: 'Cisza w dzień, podstawy w pobliżu',
+    color: 'from-violet-400 to-purple-500'
+  },
+  { 
+    value: 'active_sport' as const, 
+    emoji: '🏃', 
+    name: 'Aktywny sportowo',
+    description: 'Trasy, obiekty sportowe, zieleń',
+    color: 'from-orange-400 to-amber-500'
+  },
+  { 
+    value: 'car_first' as const, 
+    emoji: '🚗', 
+    name: 'Pod auto / przedmieścia',
+    description: 'Dojazd samochodem, spokój',
+    color: 'from-slate-400 to-gray-500'
   },
 ]
 
@@ -215,7 +236,7 @@ async function handleAnalyze() {
           else loadingProgress.value = Math.min(loadingProgress.value + 10, 95)
         }
       },
-      userProfile.value,
+      profileKey.value,  // Nowy system profili
       poiProvider.value
     )
     
@@ -529,14 +550,14 @@ loadRecentAnalyses()
                 <h3 class="font-semibold text-lg text-neutral-800">Twój profil</h3>
               </div>
               
-              <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div class="grid grid-cols-2 md:grid-cols-3 gap-3">
                 <button
                   v-for="profile in profileOptions"
                   :key="profile.value"
-                  @click="userProfile = profile.value"
+                  @click="profileKey = profile.value"
                   :class="[
                     'relative p-4 rounded-xl border-2 transition-all duration-200 text-left group',
-                    userProfile === profile.value 
+                    profileKey === profile.value 
                       ? 'border-[#0c66ee] bg-blue-50 shadow-md' 
                       : 'border-gray-200 bg-white hover:border-gray-300 hover:shadow-sm'
                   ]"
@@ -545,12 +566,12 @@ loadRecentAnalyses()
                   <div class="flex items-start gap-3">
                     <div 
                       class="w-12 h-12 rounded-xl flex items-center justify-center text-2xl shadow-sm"
-                      :class="userProfile === profile.value ? `bg-gradient-to-br ${profile.color} text-white` : 'bg-gray-100'"
+                      :class="profileKey === profile.value ? `bg-gradient-to-br ${profile.color} text-white` : 'bg-gray-100'"
                     >
                       {{ profile.emoji }}
                     </div>
                     <div class="flex-1 min-w-0">
-                      <p class="font-semibold text-sm" :class="userProfile === profile.value ? 'text-[#0c66ee]' : 'text-neutral-800'">
+                      <p class="font-semibold text-sm" :class="profileKey === profile.value ? 'text-[#0c66ee]' : 'text-neutral-800'">
                         {{ profile.name }}
                       </p>
                       <p class="text-xs text-gray-500 mt-0.5 leading-tight">{{ profile.description }}</p>
@@ -559,7 +580,7 @@ loadRecentAnalyses()
                   
                   <!-- Selected indicator -->
                   <div 
-                    v-if="userProfile === profile.value"
+                    v-if="profileKey === profile.value"
                     class="absolute top-2 right-2 w-5 h-5 rounded-full bg-[#0c66ee] flex items-center justify-center"
                   >
                     <MdiIcon :path="mdiCheckCircle" :size="14" class="text-white" />

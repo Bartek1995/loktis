@@ -49,7 +49,19 @@ class LocationAnalysis(models.Model):
     analysis_radius = models.IntegerField(default=500)
     parsing_errors = models.JSONField(default=list, blank=True)
     
-    # Persona-based analysis (User Profiles)
+    # Persona-based analysis (User Profiles) - NOWY SYSTEM PROFILI
+    profile_key = models.CharField(
+        max_length=30,
+        default='family',
+        db_index=True,
+        help_text="Klucz profilu scoringu (family, urban, quiet_green, remote_work, active_sport, car_first)"
+    )
+    profile_config_version = models.IntegerField(
+        default=1,
+        help_text="Wersja konfiguracji profilu użyta do analizy"
+    )
+    
+    # Legacy field - zachowujemy dla kompatybilności wstecznej
     user_profile = models.CharField(
         max_length=20, 
         default='family',
@@ -58,12 +70,23 @@ class LocationAnalysis(models.Model):
             ('urban', 'Singiel / City Life'),
             ('investor', 'Inwestor'),
         ],
-        help_text="Profil użytkownika użyty do analizy"
+        help_text="[LEGACY] Profil użytkownika - użyj profile_key"
     )
+    
     scoring_data = models.JSONField(
         default=dict, 
         blank=True,
         help_text="Wynik scoringu z dynamicznymi wagami"
+    )
+    category_scores = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Scores per kategoria z pełnym breakdown (nature_place, nature_background, etc.)"
+    )
+    scoring_debug = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Debug info: wkłady, promienie, krzywe spadku (tylko dev)"
     )
     verdict_data = models.JSONField(
         default=dict, 

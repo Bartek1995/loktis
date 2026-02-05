@@ -105,6 +105,61 @@ export interface PersonaData {
   description: string;
 }
 
+// Profile types (nowy system)
+export interface ProfileData {
+  key: string;
+  name: string;
+  emoji: string;
+  description: string;
+  weights?: Record<string, number>;
+  radius_m?: Record<string, number>;
+  thresholds?: {
+    recommended: number;
+    conditional: number;
+  };
+  critical_caps?: Array<{
+    category: string;
+    threshold: number;
+    cap: number;
+  }>;
+  version?: number;
+}
+
+export interface CategoryScoreResult {
+  category: string;
+  score: number;
+  utility_score: number;
+  utility_sum?: number;
+  coverage_bonus: number;
+  nearest_distance_m: number | null;
+  poi_count: number;
+  radius_used: number;
+  is_critical: boolean;
+  top_pois: Array<{
+    name: string;
+    distance_m: number;
+    score: number;
+    rating?: number | null;
+  }>;
+}
+
+export interface ProfileScoringData {
+  total_score: number;
+  base_score: number;
+  noise_penalty: number;
+  roads_penalty?: number;
+  quiet_score: number;
+  profile_key: string;
+  profile_config_version: number;
+  verdict: string;
+  critical_caps_applied: string[];
+  category_scores: Record<string, CategoryScoreResult>;
+  warnings: string[];
+  strengths: string[];
+  weaknesses: string[];
+  debug?: Record<string, any>;
+}
+
 export interface ScoringData {
   total_score: number;
   base_score: number;
@@ -138,9 +193,12 @@ export interface AnalysisReport {
   checklist: string[];
   limitations: string[];
   public_id?: string;
-  // Persona system
+  // Persona system (legacy)
   persona?: PersonaData;
-  scoring?: ScoringData;
+  legacy_scoring?: ScoringData;
+  // Profile system (nowy)
+  profile?: ProfileData;
+  scoring?: ProfileScoringData;
   verdict?: VerdictData;
 }
 
@@ -270,7 +328,7 @@ export const analyzerApi = {
     radius: number,
     referenceUrl?: string,
     onStatus?: (event: { status: string; message?: string; result?: AnalysisReport; error?: string }) => void,
-    userProfile: 'family' | 'urban' | 'investor' = 'family',
+    profileKey: string = 'family',  // Nowy system profili
     poiProvider: 'overpass' | 'google' | 'hybrid' = 'hybrid'
   ): Promise<AnalysisReport> {
     const body: Record<string, unknown> = { 
@@ -280,7 +338,8 @@ export const analyzerApi = {
       area_sqm: areaSqm,
       address,
       radius,
-      user_profile: userProfile,
+      profile_key: profileKey,  // Nowy parametr
+      user_profile: profileKey, // Legacy fallback
       poi_provider: poiProvider
     };
     if (referenceUrl) {
@@ -347,6 +406,22 @@ export const analyzerApi = {
    */
   async getProviders(): Promise<ProvidersResponse> {
     const response = await apiClient.get<ProvidersResponse>('/providers/');
+    return response.data;
+  },
+
+  /**
+   * Pobiera listę dostępnych profili scoringu
+   */
+  async getProfiles(): Promise<{ profiles: ProfileData[]; default: string }> {
+    const response = await apiClient.get('/profiles/');
+    return response.data;
+  },
+
+  /**
+   * Pobiera szczegóły konkretnego profilu
+   */
+  async getProfile(profileKey: string): Promise<ProfileData> {
+    const response = await apiClient.get(`/profiles/${profileKey}/`);
     return response.data;
   },
 

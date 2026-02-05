@@ -11,7 +11,9 @@ from .report_builder import ReportBuilder, AnalysisReport
 from .cache import listing_cache, overpass_cache, TTLCache, normalize_coords
 from .models import LocationAnalysis
 from .personas import get_persona_by_string, PersonaType
-from .scoring import ScoringEngine, VerdictGenerator
+from .scoring.profile_verdict import ProfileVerdictGenerator
+from .scoring.profiles import get_profile, get_profiles_summary
+from .scoring.profile_engine import create_scoring_engine
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +35,22 @@ class AnalysisService:
         )
         self.poi_analyzer = POIAnalyzer()
         self.report_builder = ReportBuilder()
+    
+    def _map_profile_to_persona(self, profile_key: str) -> str:
+        """
+        Mapuje nowy klucz profilu na starą personę dla legacy kompatybilności.
+        """
+        # Mapowanie nowych profili na stare persony
+        mapping = {
+            'urban': 'urban',
+            'family': 'family',
+            'quiet_green': 'family',  # Najbliżej family pod względem priorytetów
+            'remote_work': 'urban',   # Praca z domu - miejski profil
+            'active_sport': 'urban',  # Aktywny - miejski profil
+            'car_first': 'family',    # Przedmieścia - rodzina
+            'investor': 'investor',
+        }
+        return mapping.get(profile_key, 'family')
     
     def analyze_stream(self, url: str, radius: int = 500, use_cache: bool = True):
         """
@@ -124,22 +142,39 @@ class AnalysisService:
         address: str,
         radius: int = 500,
         reference_url: str = None,
-        user_profile: str = 'family',
+        user_profile: str = 'family',  # Legacy - mapujemy na profile_key
         poi_provider: str = 'overpass',
+        profile_key: str = None,  # Nowy parametr - klucz profilu
     ):
         """
         Generator analizy lokalizacji (location-first model).
         Yields: dict z eventem (status, message, result?)
+        
+        Args:
+            profile_key: Klucz nowego profilu (urban, family, quiet_green, remote_work, active_sport, car_first)
+            user_profile: [LEGACY] Stary parametr - mapowany na profile_key jeśli profile_key nie podany
         """
         import json
         
         try:
-            # Pobierz persona dla profilu
-            persona = get_persona_by_string(user_profile)
+            # Mapowanie legacy user_profile -> profile_key
+            effective_profile_key = profile_key or user_profile
+            
+            # Pobierz nowy profil konfiguracyjny
+            profile = get_profile(effective_profile_key)
+
+            # Ustal promien pobierania POI = max promien per kategoria w profilu
+            profile_radius_max = max(profile.radius_m.values()) if profile.radius_m else radius
+            fetch_radius = max(radius, profile_radius_max)
+            
+            # Legacy: pobierz też starą personę dla kompatybilności wstecznej
+            # Mapujemy nowe profile_key na stare persony gdzie to możliwe
+            legacy_persona_key = self._map_profile_to_persona(effective_profile_key)
+            persona = get_persona_by_string(legacy_persona_key)
             
             yield json.dumps({
                 'status': 'starting', 
-                'message': f'Rozpoczynam analizę lokalizacji dla profilu: {persona.emoji} {persona.name}...'
+                'message': f'Rozpoczynam analizę lokalizacji dla profilu: {profile.emoji} {profile.name}...'
             }) + '\n'
             
             # Twórz sztuczny PropertyData z podanych danych
@@ -162,44 +197,64 @@ class AnalysisService:
             neighborhood_score = None
             poi_stats = None
             pois = None
-            scoring_result = None
+            profile_scoring_result = None
             verdict = None
             
             try:
-                provider_label = 'Google Places' if poi_provider == 'google' else 'Overpass'
-                yield json.dumps({'status': 'map', 'message': f'Analiza mapy ({provider_label}, promień {radius}m)...'}) + '\n'
-                pois, metrics = self._get_pois(lat, lon, radius, use_cache=True, provider=poi_provider)
+                provider_label = 'Google Places' if poi_provider == 'google' else ('Hybrid' if poi_provider == 'hybrid' else 'Overpass')
+                yield json.dumps({'status': 'map', 'message': f'Analiza mapy ({provider_label}, promień {fetch_radius}m)...'}) + '\n'
+                pois, metrics = self._get_pois(lat, lon, fetch_radius, use_cache=True, provider=poi_provider)
+
+                # Debug: zrzut wykrytych POI (top 10 per kategoria)
+                if logger.isEnabledFor(logging.DEBUG):
+                    poi_debug = {}
+                    for cat, items in (pois or {}).items():
+                        if not items:
+                            continue
+                        poi_debug[cat] = [
+                            {
+                                'name': p.name,
+                                'distance_m': p.distance_m,
+                                'subcategory': p.subcategory,
+                            }
+                            for p in items[:10]
+                        ]
+                    logger.debug(f"Detected POIs (top10): {poi_debug}")
                 
                 yield json.dumps({'status': 'calculating', 'message': 'Obliczanie scoringu bazowego...'}) + '\n'
-                # 1. Najpierw standardowa analiza POI (surowe score'y)
+                
+                # 1. Standardowa analiza POI (surowe score'y) - dla kompatybilności
                 neighborhood_score = self.poi_analyzer.analyze(pois, metrics)
                 poi_stats = self.poi_analyzer.get_statistics(pois)
                 
                 yield json.dumps({
-                    'status': 'persona', 
-                    'message': f'Przeliczanie dla profilu: {persona.emoji} {persona.name}...'
+                    'status': 'profile', 
+                    'message': f'Przeliczanie dla profilu: {profile.emoji} {profile.name}...'
                 }) + '\n'
                 
-                # 2. Teraz persona-based scoring
-                scoring_engine = ScoringEngine(persona)
-                scoring_result = scoring_engine.calculate(
-                    category_scores=neighborhood_score.category_scores,
+                # 2. NOWY: Profile-based scoring z krzywymi spadku
+                profile_engine = create_scoring_engine(effective_profile_key)
+                profile_scoring_result = profile_engine.calculate(
+                    pois_by_category=pois,
                     quiet_score=neighborhood_score.quiet_score or 50.0,
+                    nature_metrics=metrics.get('nature'),
+                    base_neighborhood_score=neighborhood_score.total_score,
                 )
                 
-                # 3. Generuj werdykt decyzyjny
-                verdict_generator = VerdictGenerator()
-                verdict = verdict_generator.generate(scoring_result, persona)
+                # 3. Generuj werdykt decyzyjny (używamy nowego profilu)
+                verdict_generator = ProfileVerdictGenerator()
+                verdict = verdict_generator.generate(profile_scoring_result, profile)
                 
                 logger.info(
-                    f"Scoring dla ({lat}, {lon}) profil={user_profile}: "
-                    f"base={scoring_result.base_score:.1f}, "
-                    f"total={scoring_result.total_score:.1f}, "
+                    f"Scoring dla ({lat}, {lon}) profile={effective_profile_key}: "
+                    f"score={profile_scoring_result.total_score:.1f}, "
                     f"verdict={verdict.level.value}"
                 )
                 
             except Exception as e:
                 logger.warning(f"Błąd analizy okolicy: {e}")
+                import traceback
+                traceback.print_exc()
                 listing.errors.append("Nie udało się przeanalizować okolicy.")
             
             # Buduj raport
@@ -217,10 +272,11 @@ class AnalysisService:
                 lon=lon,
                 listing=listing,
                 report=report,
-                radius=radius,
+                radius=fetch_radius,
                 reference_url=reference_url,
                 user_profile=user_profile,
-                scoring_result=scoring_result,
+                profile_key=effective_profile_key,
+                profile_scoring_result=profile_scoring_result,
                 verdict=verdict,
             )
             
@@ -230,10 +286,12 @@ class AnalysisService:
             if saved_analysis:
                 result['public_id'] = saved_analysis.public_id
             
-            # Dodaj dane persona/scoring/verdict do wyniku
-            result['persona'] = persona.to_dict()
-            if scoring_result:
-                result['scoring'] = scoring_result.to_dict()
+            # Dodaj dane profilu i scoringu do wyniku
+            result['profile'] = profile.to_dict()
+            result['persona'] = persona.to_dict()  # Legacy
+            
+            if profile_scoring_result:
+                result['scoring'] = profile_scoring_result.to_dict()
             if verdict:
                 result['verdict'] = verdict.to_dict()
             
@@ -363,7 +421,9 @@ class AnalysisService:
         radius: int = 500,
         reference_url: str = None,
         user_profile: str = 'family',
-        scoring_result = None,
+        profile_key: str = None,
+        profile_scoring_result = None,
+        legacy_scoring_result = None,
         verdict = None,
     ) -> Optional[LocationAnalysis]:
         """Zapisuje wynik analizy lokalizacji do bazy danych."""
@@ -375,10 +435,27 @@ class AnalysisService:
             # Dodaj public_id do report_data
             report_dict = report.to_dict()
             
-            # Przygotuj dane persona-based
-            scoring_data = scoring_result.to_dict() if scoring_result else {}
+            # Przygotuj dane scoringu
+            scoring_data = profile_scoring_result.to_dict() if profile_scoring_result else {}
+            legacy_scoring_data = legacy_scoring_result.to_dict() if legacy_scoring_result else {}
             verdict_data = verdict.to_dict() if verdict else {}
-            persona_adjusted_score = scoring_result.total_score if scoring_result else None
+            
+            # Wyciągnij category_scores z nowego scoringu
+            category_scores = {}
+            if profile_scoring_result:
+                category_scores = {
+                    cat: result.to_dict()
+                    for cat, result in profile_scoring_result.category_results.items()
+                }
+            
+            # Debug info
+            scoring_debug = {
+                'profile_scoring': scoring_data,
+                'legacy_scoring': legacy_scoring_data,
+            }
+            
+            persona_adjusted_score = profile_scoring_result.total_score if profile_scoring_result else None
+            profile_config_version = profile_scoring_result.profile_config_version if profile_scoring_result else 1
             
             result, created = LocationAnalysis.objects.update_or_create(
                 url_hash=url_hash,
@@ -405,9 +482,13 @@ class AnalysisService:
                     'source_provider': 'location',
                     'analysis_radius': radius,
                     'parsing_errors': listing.errors,
-                    # Persona-based data
-                    'user_profile': user_profile,
+                    # Nowe pola profili
+                    'profile_key': profile_key or user_profile,
+                    'profile_config_version': profile_config_version,
+                    'user_profile': user_profile,  # Legacy
                     'scoring_data': scoring_data,
+                    'category_scores': category_scores,
+                    'scoring_debug': scoring_debug,
                     'verdict_data': verdict_data,
                     'persona_adjusted_score': persona_adjusted_score,
                 }
@@ -419,11 +500,13 @@ class AnalysisService:
                 result.report_data = report_dict
                 result.save(update_fields=['report_data'])
             
-            logger.info(f"Zapisano analizę lokalizacji: {result.public_id} [profil: {user_profile}]")
+            logger.info(f"Zapisano analizę lokalizacji: {result.public_id} [profil: {profile_key or user_profile}]")
             return result
             
         except Exception as e:
             logger.warning(f"Nie udało się zapisać do bazy: {e}")
+            import traceback
+            traceback.print_exc()
             return None
     
     def _error_response(self, message: str) -> Dict[str, Any]:

@@ -303,25 +303,36 @@ class ReportBuilder:
         
         # Kolory zgodne z frontendem (Tailwind colors)
         category_colors = {
-            'shops': '#F59E0B',      # amber-500
-            'transport': '#3B82F6',  # blue-500
-            'education': '#8B5CF6',  # violet-500
-            'health': '#EF4444',     # red-500
-            'nature': '#10B981',     # emerald-500 (Zieleń)
-            'leisure': '#F97316',    # orange-500 (Sport)
-            'food': '#EC4899',       # pink-500
-            'finance': '#64748B',    # slate-500
+            'shops': '#F59E0B',          # amber-500
+            'transport': '#3B82F6',      # blue-500
+            'education': '#8B5CF6',      # violet-500
+            'health': '#EF4444',         # red-500
+            'nature_place': '#10B981',   # emerald-500 (Parki, ogrody)
+            'nature_background': '#06B6D4',  # cyan-500 (Woda, lasy, łąki)
+            'nature': '#10B981',         # legacy (Zieleń)
+            'leisure': '#F97316',        # orange-500 (Sport)
+            'food': '#EC4899',           # pink-500
+            'finance': '#64748B',        # slate-500
+        }
+
+        water_subcategories = {
+            'water', 'beach', 'river', 'stream', 'canal', 'lake', 'pond', 'reservoir'
         }
         
         for category, pois in pois_by_category.items():
             for poi in pois:
+                color = category_colors.get(category, '#6B7280')
+                if category == 'nature_background' and (poi.subcategory or '').lower() in water_subcategories:
+                    # Wyróżnij wodę innym kolorem na mapie
+                    color = '#F97316'  # orange-500
+
                 markers.append({
                     'lat': poi.lat,
                     'lon': poi.lon,
                     'name': poi.name,
                     'category': category,
                     'subcategory': poi.subcategory,
-                    'color': category_colors.get(category, '#6B7280'),
+                    'color': color,
                     'distance': round(poi.distance_m) if poi.distance_m else None
                 })
         

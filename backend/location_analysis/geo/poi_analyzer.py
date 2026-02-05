@@ -32,16 +32,18 @@ class POIAnalyzer:
     Używa prostej heurystyki wagowej.
     """
     
-    # Wagi kategorii (suma = 100)
+    # Wagi kategorii (suma = 100) - używane do podstawowego scoringu
+    # Nowe kategorie: nature_place (parki) i nature_background (zieleń/woda)
     CATEGORY_WEIGHTS = {
-        'shops': 20,
-        'transport': 25,
+        'shops': 18,
+        'transport': 22,
         'education': 10,
-        'health': 15,
-        'nature': 15,     # Nowa kategoria: Zieleń i Wypoczynek
-        'leisure': 5,     # Sport i Rekreacja (zmniejszona waga)
-        'food': 5,        # Zmniejszone o 5
-        'finance': 5,     # Zmniejszone o 5
+        'health': 14,
+        'nature_place': 10,      # Parki, ogrody, rezerwaty
+        'nature_background': 6,  # Las, łąka, woda (tło)
+        'leisure': 8,
+        'food': 7,
+        'finance': 5,
     }
     
     # Oczekiwana liczba POI dla 100% score w kategorii
@@ -50,7 +52,8 @@ class POIAnalyzer:
         'transport': 3,
         'education': 2,
         'health': 3,
-        'nature': 2,      # Wystarczą 2 parki/lasy blisko
+        'nature_place': 2,      # Wystarczą 2 parki blisko
+        'nature_background': 3,  # Elementy zieleni w tle
         'leisure': 2,
         'food': 5,
         'finance': 2,
@@ -286,7 +289,8 @@ class POIAnalyzer:
             'transport': 'transport publiczny',
             'education': 'edukacja',
             'health': 'służba zdrowia',
-            'nature': 'zieleń i wypoczynek',
+            'nature_place': 'parki i ogrody',
+            'nature_background': 'zieleń w otoczeniu',
             'leisure': 'sport i rekreacja',
             'food': 'gastronomia',
             'finance': 'banki',
@@ -311,7 +315,8 @@ class POIAnalyzer:
             'transport': 'Transport publiczny',
             'education': 'Edukacja',
             'health': 'Zdrowie',
-            'nature': 'Zieleń i Wypoczynek',
+            'nature_place': 'Parki i ogrody',
+            'nature_background': 'Zieleń w otoczeniu',
             'leisure': 'Sport i Rekreacja',
             'food': 'Gastronomia',
             'finance': 'Finanse',

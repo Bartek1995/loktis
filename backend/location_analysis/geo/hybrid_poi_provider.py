@@ -12,7 +12,7 @@ import logging
 from typing import Dict, List, Any, Tuple, Optional
 from dataclasses import dataclass
 
-from .overpass_client import OverpassClient, POI
+from .overpass_client import OverpassClient, POI, MAX_POIS_PER_CATEGORY
 from .google_places_client import GooglePlacesClient
 from .nature_metrics import NatureMetrics
 
@@ -30,13 +30,15 @@ class EnrichmentConfig:
 
 
 # Domyślna konfiguracja enrichment per kategoria
+# max_distance_m zwiększone bo OSM i Google mają często przesunięcia 50-100m
 DEFAULT_ENRICHMENT_CONFIG = {
-    'shops': EnrichmentConfig(top_k=5, enrich=True, max_distance_m=100, search_radius_m=100),
-    'education': EnrichmentConfig(top_k=3, enrich=True, max_distance_m=120, search_radius_m=120),
-    'health': EnrichmentConfig(top_k=3, enrich=True, max_distance_m=100, search_radius_m=100),
-    'food': EnrichmentConfig(top_k=3, enrich=True, max_distance_m=80, search_radius_m=80),
+    'shops': EnrichmentConfig(top_k=5, enrich=True, max_distance_m=120, search_radius_m=120),
+    'education': EnrichmentConfig(top_k=3, enrich=True, max_distance_m=250, search_radius_m=200),
+    'health': EnrichmentConfig(top_k=3, enrich=True, max_distance_m=180, search_radius_m=150),
+    'food': EnrichmentConfig(top_k=3, enrich=True, max_distance_m=150, search_radius_m=120),
     'transport': EnrichmentConfig(top_k=3, enrich=False),  # OSM wystarczy
-    'nature': EnrichmentConfig(top_k=0, enrich=False),     # OSM wystarczy
+    'nature_place': EnrichmentConfig(top_k=2, enrich=True, max_distance_m=200, search_radius_m=150),  # Parki
+    'nature_background': EnrichmentConfig(top_k=0, enrich=False),  # Metryki, nie POI
     'leisure': EnrichmentConfig(top_k=3, enrich=True, max_distance_m=150, search_radius_m=150),
     'finance': EnrichmentConfig(top_k=2, enrich=False),
 }
@@ -122,6 +124,9 @@ class HybridPOIProvider:
             logger.info(f"Hybrid: Layer 2 - Enrichment for top-k POIs")
             enriched_count = self._enrich_top_k(pois, lat, lon)
             logger.info(f"Hybrid: Enriched {enriched_count} POIs with ratings")
+
+        # Final dedup po enrichment/fallback
+        self._dedupe_pois(pois)
         
         return pois, metrics
     
@@ -300,12 +305,18 @@ class HybridPOIProvider:
                                 )
                                 continue
                         
+                        final_place_id = poi.tags.get('place_id') or details.get('place_id')
+                        if final_place_id and final_place_id in seen_place_ids:
+                            logger.debug(f"Skipping duplicate place_id after lookup: {final_place_id}")
+                            continue
+
                         rating = details.get('rating')
                         reviews = details.get('user_ratings_total', 0)
                         
                         # Dopisz do tags
                         poi.tags['rating'] = rating
                         poi.tags['reviews_count'] = reviews
+                        poi.tags['user_ratings_total'] = reviews
                         poi.tags['enriched'] = True
                         
                         # Ustal finalne place_id i dodaj do seen (ZAWSZE po enrichment)
@@ -347,3 +358,27 @@ class HybridPOIProvider:
                 return True
         
         return False
+
+    def _dedupe_pois(self, pois: Dict[str, List[POI]]) -> None:
+        """Deduplikuje POI po place_id lub (nazwa + bucket dystansu)."""
+        for category, items in pois.items():
+            seen_place_ids = set()
+            seen_fallback = set()
+            unique_items = []
+            
+            for poi in items:
+                place_id = poi.tags.get('place_id')
+                if place_id:
+                    if place_id in seen_place_ids:
+                        continue
+                    seen_place_ids.add(place_id)
+                else:
+                    fallback_key = (poi.name.lower(), round((poi.distance_m or 0) / 20) * 20)
+                    if fallback_key in seen_fallback:
+                        continue
+                    seen_fallback.add(fallback_key)
+                
+                unique_items.append(poi)
+            
+            unique_items.sort(key=lambda p: p.distance_m)
+            pois[category] = unique_items[:MAX_POIS_PER_CATEGORY]

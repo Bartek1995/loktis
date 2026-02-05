@@ -68,11 +68,31 @@ class AnalyzeLocationRequestSerializer(serializers.Serializer):
         max_length=2048,
         help_text="Opcjonalny URL ogłoszenia jako referencja"
     )
-    user_profile = serializers.ChoiceField(
-        choices=['family', 'urban', 'investor'],
+    # Nowy parametr: profile_key
+    profile_key = serializers.ChoiceField(
+        choices=[
+            ('urban', 'City Life'),
+            ('family', 'Rodzina z dziećmi'),
+            ('quiet_green', 'Spokojnie i zielono'),
+            ('remote_work', 'Home Office'),
+            ('active_sport', 'Aktywny sportowo'),
+            ('car_first', 'Pod auto / przedmieścia'),
+            ('investor', 'Inwestor'),
+        ],
         required=False,
         default='family',
-        help_text="Profil użytkownika (family, urban, investor)"
+        help_text="Klucz profilu scoringu"
+    )
+    # Legacy - zachowujemy dla kompatybilności (mapowane na profile_key)
+    user_profile = serializers.ChoiceField(
+        choices=[
+            'urban', 'family', 'quiet_green', 'remote_work', 
+            'active_sport', 'car_first',
+            'investor',  # legacy
+        ],
+        required=False,
+        default='family',
+        help_text="[LEGACY] Profil użytkownika - użyj profile_key"
     )
     poi_provider = serializers.ChoiceField(
         choices=['overpass', 'google', 'hybrid'],

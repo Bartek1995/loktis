@@ -55,9 +55,9 @@ GOOGLE_TO_CATEGORY = {
     'health': ('health', 'clinic'),
     
     # Nature
-    'park': ('nature', 'park'),
-    'natural_feature': ('nature', 'natural'),
-    'campground': ('nature', 'campground'),
+    'park': ('nature_place', 'park'),
+    'natural_feature': ('nature_place', 'natural'),
+    'campground': ('nature_place', 'campground'),
     
     # Leisure
     'gym': ('leisure', 'fitness_centre'),
@@ -92,7 +92,7 @@ class GooglePlacesClient:
         'transport': ['subway_station', 'bus_station', 'train_station', 'transit_station'],
         'education': ['school', 'university', 'library'],
         'health': ['pharmacy', 'hospital', 'doctor', 'dentist'],
-        'nature': ['park', 'natural_feature'],
+        'nature_place': ['park', 'natural_feature', 'campground'],
         'leisure': ['gym', 'stadium', 'movie_theater'],
         'food': ['restaurant', 'cafe', 'bar'],
         'finance': ['bank', 'atm'],
@@ -122,7 +122,8 @@ class GooglePlacesClient:
         
         pois_by_category: Dict[str, List[POI]] = {
             'shops': [], 'transport': [], 'education': [], 'health': [],
-            'nature': [], 'leisure': [], 'food': [], 'finance': [], 'roads': []
+            'nature_place': [], 'nature_background': [], 'leisure': [],
+            'food': [], 'finance': [], 'roads': []
         }
         
         nature_metrics = NatureMetrics()
@@ -139,7 +140,7 @@ class GooglePlacesClient:
                             pois_by_category[our_category].append(poi)
                             
                             # Aktualizuj nature metrics dla parków
-                            if our_category == 'nature' and poi.subcategory == 'park':
+                            if our_category == 'nature_place' and poi.subcategory == 'park':
                                 nature_metrics.add_park(poi.distance_m)
                                 
                 except Exception as e:
@@ -246,7 +247,9 @@ class GooglePlacesClient:
                     'rating': place.get('rating'),
                     'user_ratings_total': place.get('user_ratings_total'),
                     'types': place.get('types', []),
-                }
+                },
+                primary_category=our_category,
+                secondary_categories=[],
             )
         except Exception as e:
             logger.warning(f"Error creating POI from Google place: {e}")
@@ -364,7 +367,8 @@ class GooglePlacesClient:
         """Zwraca pustą strukturę wyników."""
         empty_metrics = NatureMetrics()
         return (
-            {cat: [] for cat in ['shops', 'transport', 'education', 'health', 
-                                  'nature', 'leisure', 'food', 'finance', 'roads']},
+            {cat: [] for cat in ['shops', 'transport', 'education', 'health',
+                                  'nature_place', 'nature_background', 'leisure',
+                                  'food', 'finance', 'roads']},
             {'nature': empty_metrics.to_dict()}
         )

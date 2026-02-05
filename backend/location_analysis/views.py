@@ -22,6 +22,7 @@ from .serializers import (
 from .services import analysis_service
 from .rate_limiter import rate_limit
 from .providers import ProviderRegistry
+from .scoring.profiles import get_profiles_summary, get_profile
 
 logger = logging.getLogger(__name__)
 
@@ -53,10 +54,14 @@ class AnalyzeLocationView(APIView):
         address = serializer.validated_data['address']
         radius = serializer.validated_data.get('radius', 500)
         reference_url = serializer.validated_data.get('reference_url', None)
+        profile_key = serializer.validated_data.get('profile_key', None)
         user_profile = serializer.validated_data.get('user_profile', 'family')
         poi_provider = serializer.validated_data.get('poi_provider', 'overpass')
         
-        logger.info(f"Analiza lokalizacji (stream): ({lat}, {lon}) - {address} [profil: {user_profile}, provider: {poi_provider}]")
+        # Użyj profile_key jeśli podany, inaczej fallback na user_profile
+        effective_profile = profile_key or user_profile
+        
+        logger.info(f"Analiza lokalizacji (stream): ({lat}, {lon}) - {address} [profil: {effective_profile}, provider: {poi_provider}]")
         
         response = StreamingHttpResponse(
             analysis_service.analyze_location_stream(
@@ -68,6 +73,7 @@ class AnalyzeLocationView(APIView):
                 radius=radius,
                 reference_url=reference_url,
                 user_profile=user_profile,
+                profile_key=profile_key,
                 poi_provider=poi_provider,
             ),
             content_type='application/x-ndjson'
@@ -187,6 +193,27 @@ class ProvidersView(APIView):
                 }
             ],
             'allowed_domains': domains,
+        })
+
+
+class ProfilesView(APIView):
+    """
+    Endpoint do pobierania dostępnych profili scoringu.
+    
+    GET /api/profiles/          - lista profili
+    GET /api/profiles/{key}/    - szczegóły profilu
+    """
+    
+    def get(self, request, profile_key=None):
+        if profile_key:
+            # Szczegóły konkretnego profilu
+            profile = get_profile(profile_key)
+            return Response(profile.to_dict())
+        
+        # Lista wszystkich profili
+        return Response({
+            'profiles': get_profiles_summary(),
+            'default': 'family',
         })
 
 

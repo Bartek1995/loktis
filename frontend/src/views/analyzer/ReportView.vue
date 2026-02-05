@@ -5,7 +5,7 @@
  */
 import { ref, computed, onMounted, nextTick, watch } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
-import { analyzerApi, type AnalysisReport, type POICategoryStats, type TrafficAnalysis, type NatureMetrics } from '@/api/analyzerApi';
+import { analyzerApi, type AnalysisReport, type POICategoryStats, type TrafficAnalysis, type NatureMetrics, type POIItem } from '@/api/analyzerApi';
 import * as L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 
@@ -59,6 +59,8 @@ const categoryVisibility = ref<Record<string, boolean>>({
   transport: true,
   education: true,
   health: true,
+  nature_place: true,
+  nature_background: true,
   nature: true,
   leisure: true,
   food: true,
@@ -220,6 +222,8 @@ function getCategoryName(category: string): string {
     transport: 'Transport',
     education: 'Edukacja',
     health: 'Zdrowie',
+    nature_place: 'Parki i ogrody',
+    nature_background: 'Zieleń w otoczeniu',
     nature: 'Zieleń',
     leisure: 'Sport',
     food: 'Gastronomia',
@@ -234,6 +238,8 @@ function getCategoryIcon(category: string): string {
     transport: 'pi-car',
     education: 'pi-book',
     health: 'pi-heart',
+    nature_place: 'pi-sun',
+    nature_background: 'pi-map',
     nature: 'pi-sun',
     leisure: 'pi-stopwatch',
     food: 'pi-apple',
@@ -275,12 +281,64 @@ function getCategoryColor(category: string): string {
     transport: '#3B82F6',
     education: '#8B5CF6',
     health: '#EF4444',
+    nature_place: '#10B981',
+    nature_background: '#06B6D4',
     nature: '#10B981',
     leisure: '#F97316',
     food: '#EC4899',
     finance: '#64748B',
   };
   return colors[category] || '#6B7280';
+}
+
+function getPoiItemColor(category: string, subcategory: string): string {
+  if (category === 'nature_background') {
+    const waterTypes = new Set([
+      'water', 'beach', 'river', 'stream', 'canal', 'lake', 'pond', 'reservoir'
+    ]);
+    if (waterTypes.has((subcategory || '').toLowerCase())) {
+      return '#F97316';
+    }
+  }
+  return getCategoryColor(category);
+}
+
+function findMarkerForItem(category: string, name: string, subcategory: string) {
+  const markers = report.value?.neighborhood?.markers || [];
+  return (
+    markers.find(m => m.category === category && m.name === name && m.subcategory === subcategory) ||
+    markers.find(m => m.category === category && m.name === name) ||
+    markers.find(m => m.category === category) ||
+    null
+  );
+}
+
+function focusOnPoi(category: string, item: POIItem) {
+  const marker = findMarkerForItem(category, item.name, item.subcategory);
+  if (!marker) return;
+
+  mapContainer.value?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  categoryVisibility.value[category] = true;
+  updateMapMarkers();
+
+  if (selectedMapType.value === 'google' && googleMap.value) {
+    googleMap.value.panTo({ lat: marker.lat, lng: marker.lon });
+    googleMap.value.setZoom(16);
+    const gMarker = googleMarkers.value.find(
+      m => m._name === marker.name && m._subcategory === marker.subcategory
+    );
+    if (gMarker && gMarker._infoWindow) {
+      gMarker._infoWindow.open(googleMap.value, gMarker);
+    }
+  } else if (map.value) {
+    map.value.setView([marker.lat, marker.lon], 16, { animate: true });
+    const lMarker = leafletPoiMarkers.value.find(
+      m => (m as any)._name === marker.name && (m as any)._subcategory === marker.subcategory
+    );
+    if (lMarker) {
+      lMarker.openPopup();
+    }
+  }
 }
 
 function getRatingColor(rating: string): string {
@@ -376,6 +434,8 @@ function initLeafletMap() {
       });
       
       (circle as any)._category = poi.category;
+      (circle as any)._name = poi.name;
+      (circle as any)._subcategory = poi.subcategory;
       
       if (categoryVisibility.value[poi.category] !== false) {
         circle.addTo(map.value as any);
@@ -444,10 +504,14 @@ async function initGoogleMap() {
       });
       
       marker._category = poi.category;
+      marker._name = poi.name;
+      marker._subcategory = poi.subcategory;
+      marker._infoWindow = null;
       
       const poiInfoWindow = new window.google.maps.InfoWindow({
         content: `<b>${poi.name}</b><br><span style="font-size: 12px; color: #666;">${poi.subcategory} (${Math.round(poi.distance || 0)}m)</span>`,
       });
+      marker._infoWindow = poiInfoWindow;
       
       marker.addListener('click', () => {
         poiInfoWindow.open(googleMap.value, marker);
@@ -728,11 +792,11 @@ onMounted(async () => {
               </div>
             </div>
             
-            <!-- Persona Badge (if available) -->
-            <div v-if="report!.persona" class="flex-shrink-0">
+            <!-- Profile Badge (nowy system) -->
+            <div v-if="report!.profile || report!.persona" class="flex-shrink-0">
               <div class="bg-slate-50 rounded-xl p-4 border border-slate-200 text-center min-w-[140px]">
-                <span class="text-3xl">{{ report!.persona.emoji }}</span>
-                <p class="font-semibold text-sm text-slate-800 mt-2">{{ report!.persona.name }}</p>
+                <span class="text-3xl">{{ report!.profile?.emoji || report!.persona?.emoji }}</span>
+                <p class="font-semibold text-sm text-slate-800 mt-2">{{ report!.profile?.name || report!.persona?.name }}</p>
                 <p class="text-xs text-slate-500 mt-0.5">Twój profil</p>
               </div>
             </div>
@@ -749,8 +813,13 @@ onMounted(async () => {
                 <p class="font-bold text-lg text-slate-800">{{ Math.round(report!.scoring.base_score) }}</p>
               </div>
               <div class="bg-slate-50 rounded-lg p-3 text-center">
-                <span class="text-xs text-slate-500">Modyfikator ciszy</span>
-                <p class="font-bold text-lg text-slate-800">{{ (report!.scoring.quiet_modifier * 100 - 100).toFixed(0) }}%</p>
+                <span class="text-xs text-slate-500">Kara hałasu</span>
+                <p class="font-bold text-lg text-slate-800">
+                  <template v-if="report!.scoring.noise_penalty !== undefined">
+                    -{{ report!.scoring.noise_penalty.toFixed(1) }}
+                  </template>
+                  <template v-else>-</template>
+                </p>
               </div>
               <div class="bg-slate-50 rounded-lg p-3 text-center">
                 <span class="text-xs text-slate-500">Mocne strony</span>
@@ -1162,13 +1231,23 @@ onMounted(async () => {
                       <div class="flex items-center gap-2 min-w-0">
                         <span 
                           class="w-2 h-2 rounded-full flex-shrink-0"
-                          :style="{ background: getCategoryColor(category) }"
+                          :style="{ background: getPoiItemColor(category, item.subcategory) }"
                         ></span>
                         <span class="truncate text-sm text-slate-700">{{ item.name }}</span>
                       </div>
-                      <span class="flex-shrink-0 text-xs font-medium px-2 py-1 bg-slate-200 rounded-full text-slate-600">
-                        {{ item.distance_m }}m
-                      </span>
+                      <div class="flex items-center gap-2">
+                        <button
+                          type="button"
+                          class="w-7 h-7 rounded-full bg-white border border-slate-200 text-slate-500 hover:text-blue-600 hover:border-blue-300 transition-colors flex items-center justify-center"
+                          title="Pokaż na mapie"
+                          @click="focusOnPoi(category, item)"
+                        >
+                          <i class="pi pi-map-marker text-xs"></i>
+                        </button>
+                        <span class="flex-shrink-0 text-xs font-medium px-2 py-1 bg-slate-200 rounded-full text-slate-600">
+                          {{ item.distance_m }}m
+                        </span>
+                      </div>
                     </div>
                   </div>
                   

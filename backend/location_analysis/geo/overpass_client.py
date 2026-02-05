@@ -5,17 +5,18 @@ Wersja zoptymalizowana: Single Batch Request (jedno zapytanie zamiast 8).
 import requests
 import time
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Any, Tuple
 
 from .nature_metrics import NatureMetrics
 
 
-# Typy landcover do metryk (NIE do listy POI)
+# Typy landcover do metryk nature_background (NIE do listy POI jako osobne obiekty)
 LANDCOVER_TYPES = frozenset({'grass', 'meadow', 'forest', 'wood', 'recreation_ground'})
 WATER_TYPES = frozenset({'water', 'beach', 'river', 'stream', 'canal', 'lake', 'pond', 'reservoir'})
-# Typy do listy POI nature
-NATURE_POI_TYPES = frozenset({'park', 'garden', 'nature_reserve'})
+
+# Typy do listy POI nature_place (parki, ogrody, rezerwaty - cele spaceru)
+NATURE_PLACE_TYPES = frozenset({'park', 'garden', 'nature_reserve'})
 
 # Max POI per category
 MAX_POIS_PER_CATEGORY = 30
@@ -30,6 +31,9 @@ class POI:
     subcategory: str
     distance_m: float
     tags: dict
+    primary_category: Optional[str] = None
+    secondary_categories: List[str] = field(default_factory=list)
+    osm_uid: Optional[str] = None
 
 class OverpassClient:
     """Klient do pobierania danych z OSM."""
@@ -49,6 +53,9 @@ class OverpassClient:
         'shops': {
             'query': '["shop"]',
             'name': 'Sklepy',
+            'alt_queries': [
+                '["amenity"="fuel"]',
+            ],
             'subcategories': {
                 'supermarket': 'Supermarket',
                 'convenience': 'Sklep spożywczy',
@@ -107,18 +114,23 @@ class OverpassClient:
                 'clinic': 'Przychodnia',
             }
         },
-        'nature': {
+        'nature_place': {
             'query': '["leisure"~"park|garden|nature_reserve"]',
-            'alt_queries': [
-                '["landuse"~"forest|meadow|grass|recreation_ground"]',
-                '["natural"~"wood|water|beach"]',
-                '["waterway"~"river|stream|canal"]',
-            ],
-            'name': 'Zieleń i Wypoczynek',
+            'name': 'Parki i ogrody',
             'subcategories': {
                 'park': 'Park',
                 'garden': 'Ogród',
                 'nature_reserve': 'Rezerwat przyrody',
+            }
+        },
+        'nature_background': {
+            'query': '["landuse"~"forest|meadow|grass|recreation_ground"]',
+            'alt_queries': [
+                '["natural"~"wood|water|beach"]',
+                '["waterway"~"river|stream|canal"]',
+            ],
+            'name': 'Zieleń i woda',
+            'subcategories': {
                 'forest': 'Las',
                 'wood': 'Las',
                 'meadow': 'Łąka',
@@ -131,6 +143,7 @@ class OverpassClient:
                 'canal': 'Kanał',
                 'lake': 'Jezioro',
                 'pond': 'Staw',
+                'reservoir': 'Zbiornik',
             }
         },
         'leisure': {
@@ -179,9 +192,102 @@ class OverpassClient:
             }
         },
     }
+
+    # Maksymalna liczba kategorii per POI (primary + secondary)
+    MAX_CATEGORIES_PER_POI = 2
+    SECONDARY_SCORE_RATIO = 0.7
     
     def __init__(self):
         self._current_endpoint_idx = 0
+
+    def _classify_tags(self, tags: dict) -> Dict[str, float]:
+        """Zwraca scoring kategorii na podstawie tagów."""
+        scores: Dict[str, float] = {}
+
+        def add(cat: str, pts: float) -> None:
+            scores[cat] = scores.get(cat, 0.0) + pts
+
+        shop = tags.get('shop')
+        if shop:
+            add('shops', 5)
+
+        amenity = tags.get('amenity')
+        if amenity in ['restaurant', 'cafe', 'fast_food']:
+            add('food', 5)
+        elif amenity == 'bar':
+            add('food', 3)
+        elif amenity in ['pharmacy', 'doctors', 'hospital', 'clinic']:
+            add('health', 5)
+        elif amenity in ['school', 'kindergarten', 'university', 'college']:
+            add('education', 5)
+        elif amenity in ['bank', 'atm']:
+            add('finance', 5)
+        elif amenity == 'fuel':
+            # Stacja paliw - zwykle sklep + szybkie jedzenie/kawa
+            add('shops', 3)
+            add('food', 2)
+
+        public_transport = tags.get('public_transport')
+        if public_transport in ['stop_position', 'platform']:
+            add('transport', 5)
+
+        highway = tags.get('highway')
+        if highway == 'bus_stop':
+            add('transport', 5)
+
+        railway = tags.get('railway')
+        if railway in ['tram_stop', 'station']:
+            add('transport', 5)
+        if railway in ['tram', 'rail']:
+            add('roads', 5)
+
+        leisure = tags.get('leisure')
+        if leisure in NATURE_PLACE_TYPES:
+            add('nature_place', 5)
+        elif leisure in ['playground', 'fitness_centre', 'pitch', 'sports_centre', 'stadium', 'swimming_pool']:
+            add('leisure', 5)
+
+        landuse = tags.get('landuse')
+        if landuse in LANDCOVER_TYPES or landuse in WATER_TYPES:
+            add('nature_background', 5)
+
+        natural = tags.get('natural')
+        if natural == 'wood' or natural in WATER_TYPES:
+            add('nature_background', 5)
+
+        water = tags.get('water')
+        if water in WATER_TYPES:
+            add('nature_background', 5)
+
+        waterway = tags.get('waterway')
+        if waterway in ['river', 'stream', 'canal']:
+            add('nature_background', 5)
+
+        if highway in ['motorway', 'trunk', 'primary', 'secondary', 'tertiary']:
+            add('roads', 5)
+
+        return scores
+
+    def _select_categories(
+        self,
+        scores: Dict[str, float]
+    ) -> Tuple[Optional[str], List[str]]:
+        """Wybiera primary + secondary kategorie na podstawie score."""
+        if not scores:
+            return None, []
+
+        ranked = sorted(scores.items(), key=lambda kv: kv[1], reverse=True)
+        primary, primary_score = ranked[0]
+        secondary: List[str] = []
+
+        if len(ranked) > 1:
+            for second_cat, second_score in ranked[1:]:
+                if second_score >= self.SECONDARY_SCORE_RATIO * primary_score:
+                    secondary.append(second_cat)
+                if len(secondary) >= max(0, self.MAX_CATEGORIES_PER_POI - 1):
+                    break
+
+        return primary, secondary
     
     def _get_endpoint(self) -> str:
         return self.ENDPOINTS[self._current_endpoint_idx % len(self.ENDPOINTS)]
@@ -263,9 +369,10 @@ class OverpassClient:
         # 3. Klasyfikuj i Parsuj wyniki lokalnie
         pois_by_category = {cat: [] for cat in self.POI_QUERIES}
         nature_metrics = NatureMetrics()
-        
-        # Cache przetworzonych id, żeby nie dublować (node może być częścią way, ale tu dostajemy node i way osobno z query)
-        # Overpass 'out center' zwraca geometrię way jako center, więc jest ok.
+        seen_osm_uid = set()
+        seen_grid_primary = set()
+        # Dedup: node może być częścią way, a Overpass zwraca oba (out center)
+        # Dodatkowo fallback po gridzie + primary_category.
         
         for elem in elements:
             tags = elem.get('tags', {})
@@ -275,10 +382,41 @@ class OverpassClient:
             elem_lat = elem.get('lat') or elem.get('center', {}).get('lat')
             elem_lon = elem.get('lon') or elem.get('center', {}).get('lon')
             if not elem_lat: continue
-            
-            # Dopasuj kategorie (z uwzględnieniem metryk dla nature)
-            matched_cats = self._match_categories(tags)
-            
+
+            # Dedup po osm_uid
+            elem_type = elem.get('type')
+            elem_id = elem.get('id')
+            osm_uid = f"{elem_type}:{elem_id}" if elem_type and elem_id else None
+            if osm_uid and osm_uid in seen_osm_uid:
+                continue
+            if osm_uid:
+                seen_osm_uid.add(osm_uid)
+
+            # Klasyfikacja tagów -> primary/secondary kategorie
+            scores = self._classify_tags(tags)
+            primary_category, secondary_categories = self._select_categories(scores)
+            if not primary_category:
+                continue
+            matched_cats = [primary_category] + secondary_categories
+
+            # Fallback dedupe po gridzie (lat/lon + primary + rdzen tagow)
+            core_tag = (
+                tags.get('amenity') or
+                tags.get('shop') or
+                tags.get('leisure') or
+                tags.get('highway') or
+                tags.get('railway') or
+                tags.get('natural') or
+                tags.get('water') or
+                tags.get('waterway') or
+                tags.get('landuse') or
+                ''
+            )
+            grid_key = (round(elem_lat, 5), round(elem_lon, 5), primary_category, core_tag)
+            if grid_key in seen_grid_primary:
+                continue
+            seen_grid_primary.add(grid_key)
+
             # Oblicz dystans raz
             distance = self._haversine_distance(lat, lon, elem_lat, elem_lon)
             
@@ -286,6 +424,7 @@ class OverpassClient:
             leisure = tags.get('leisure', '')
             landuse = tags.get('landuse', '')
             natural = tags.get('natural', '')
+            water = tags.get('water', '')
             
             # Land cover -> metryki (nie POI)
             if landuse in LANDCOVER_TYPES:
@@ -293,31 +432,52 @@ class OverpassClient:
             if natural == 'wood':
                 nature_metrics.add_landcover('wood', distance)
             
-            # Wody: natural=water/beach lub waterway=river/stream/canal
-            if natural in WATER_TYPES:
-                nature_metrics.add_water(distance, natural)
-            
+            # Wody: preferuj waterway/water tag, fallback do natural
             waterway = tags.get('waterway', '')
+            water_type = None
             if waterway in ('river', 'stream', 'canal'):
-                nature_metrics.add_water(distance, waterway)
+                water_type = waterway
+            elif water in WATER_TYPES:
+                water_type = water
+            elif natural in WATER_TYPES:
+                water_type = natural
+            elif landuse in WATER_TYPES:
+                water_type = landuse
+            
+            if water_type:
+                nature_metrics.add_water(distance, water_type)
             
             # Park/garden/nature_reserve -> POI + aktualizuj metrykę nearest_park
             if leisure == 'park':
                 nature_metrics.add_park(distance)
             
             for cat in matched_cats:
-                # Dla nature: pomiń land cover (grass/meadow/forest), ale zostaw parki i wodę
-                if cat == 'nature':
-                    # Parki, ogrody, rezerwaty - TAK
-                    is_valuable_nature_poi = leisure in NATURE_POI_TYPES
-                    # Wody (water, beach, river, stream) - TAK, pokazujemy na mapie
-                    is_water = natural in WATER_TYPES or waterway in ('river', 'stream', 'canal')
-                    
-                    # Pomiń tylko land cover (grass, meadow, forest, wood)
-                    if not is_valuable_nature_poi and not is_water:
+                # Dla nature_background: pomiń jako POI, tylko metryki
+                # (landcover i woda są w metrykach, nie jako osobne POI na mapie)
+                if cat == 'nature_background':
+                    # Wody (water, beach, river, stream, reservoir) - TAK, pokazujemy na mapie jako POI
+                    is_water = (
+                        natural in WATER_TYPES or
+                        waterway in ('river', 'stream', 'canal') or
+                        water in WATER_TYPES or
+                        landuse in WATER_TYPES
+                    )
+                    if not is_water:
+                        # Pomiń land cover (grass, meadow, forest, wood) jako POI
                         continue
                 
-                poi = self._create_poi(elem, tags, cat, elem_lat, elem_lon, lat, lon)
+                poi = self._create_poi(
+                    elem,
+                    tags,
+                    cat,
+                    elem_lat,
+                    elem_lon,
+                    lat,
+                    lon,
+                    primary_category=primary_category,
+                    secondary_categories=secondary_categories,
+                    osm_uid=osm_uid,
+                )
                 if poi:
                     pois_by_category[cat].append(poi)
         
@@ -333,62 +493,25 @@ class OverpassClient:
 
     def _match_categories(self, tags: dict) -> List[str]:
         """Sprawdza, do jakich kategorii pasuje dany obiekt na podstawie tagów."""
-        matches = []
-        
-        # Shops
-        if 'shop' in tags:
-            matches.append('shops')
-            
-        # Transport (public_transport=stop_position OR highway=bus_stop OR railway=tram_stop/station)
-        if (tags.get('public_transport') == 'stop_position' or 
-            tags.get('highway') == 'bus_stop' or 
-            tags.get('railway') in ['tram_stop', 'station']):
-            matches.append('transport')
-            
-        # Education (amenity ~ school|kindergarten|university)
-        amenity = tags.get('amenity', '')
-        if amenity in ['school', 'kindergarten', 'university']:
-            matches.append('education')
-            
-        # Health (amenity ~ pharmacy|doctors|hospital|clinic)
-        if amenity in ['pharmacy', 'doctors', 'hospital', 'clinic']:
-            matches.append('health')
-            
-        # Nature (leisure ~ park|garden|nature_reserve OR landuse ~ ... OR waterway ~ ...)
-        leisure = tags.get('leisure', '')
-        landuse = tags.get('landuse', '')
-        natural = tags.get('natural', '')
-        waterway = tags.get('waterway', '')
-        
-        if (leisure in ['park', 'garden', 'nature_reserve'] or
-            landuse in ['forest', 'meadow', 'grass', 'recreation_ground'] or
-            natural in ['wood', 'water', 'beach'] or
-            waterway in ['river', 'stream', 'canal']):
-            matches.append('nature')
-            
-        # Leisure (playground, fitness, pitch, etc)
-        if leisure in ['playground', 'fitness_centre', 'pitch', 'sports_centre', 'stadium', 'swimming_pool']:
-            matches.append('leisure')
-            
-        # Food
-        if amenity in ['restaurant', 'cafe', 'fast_food']:
-            matches.append('food')
-            
-        # Finance
-        if amenity in ['bank', 'atm']:
-            matches.append('finance')
-            
-        # Roads (highway ~ motorway... OR railway ~ tram|rail)
-        highway = tags.get('highway', '')
-        railway = tags.get('railway', '')
-        if (highway in ['motorway', 'trunk', 'primary', 'secondary', 'tertiary'] or
-            railway in ['tram', 'rail']):
-            matches.append('roads')
-            
-        return matches
+        scores = self._classify_tags(tags)
+        primary, secondary = self._select_categories(scores)
+        if not primary:
+            return []
+        return [primary] + secondary
 
-    def _create_poi(self, elem: dict, tags: dict, category: str, 
-                    lat: float, lon: float, ref_lat: float, ref_lon: float) -> Optional[POI]:
+    def _create_poi(
+        self,
+        elem: dict,
+        tags: dict,
+        category: str,
+        lat: float,
+        lon: float,
+        ref_lat: float,
+        ref_lon: float,
+        primary_category: Optional[str] = None,
+        secondary_categories: Optional[List[str]] = None,
+        osm_uid: Optional[str] = None,
+    ) -> Optional[POI]:
         """Tworzy obiekt POI dla danej kategorii."""
         config = self.POI_QUERIES.get(category, {})
         
@@ -410,9 +533,18 @@ class OverpassClient:
             subcategory = tags.get('amenity', '')
         elif category == 'health':
             subcategory = tags.get('amenity', '')
-        elif category == 'nature':
-            # Priorytet: leisure > landuse > natural
-            subcategory = tags.get('leisure') or tags.get('landuse') or tags.get('natural', '')
+        elif category == 'nature_place':
+            # Parki, ogrody, rezerwaty
+            subcategory = tags.get('leisure', '')
+        elif category == 'nature_background':
+            # Las, łąka, woda - priorytet: landuse > waterway > water > natural
+            subcategory = (
+                tags.get('landuse') or
+                tags.get('waterway') or
+                tags.get('water') or
+                tags.get('natural') or
+                ''
+            )
         elif category == 'leisure':
             subcategory = tags.get('leisure', '')
         elif category == 'food':
@@ -461,7 +593,10 @@ class OverpassClient:
             category=category,
             subcategory=subcategory,
             distance_m=round(distance),
-            tags=tags
+            tags=tags,
+            primary_category=primary_category or category,
+            secondary_categories=secondary_categories or [],
+            osm_uid=osm_uid,
         )
 
     def _haversine_distance(self, lat1, lon1, lat2, lon2):
