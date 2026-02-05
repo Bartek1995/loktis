@@ -80,6 +80,40 @@ GOOGLE_TO_CATEGORY = {
     'atm': ('finance', 'atm'),
 }
 
+BADGE_TYPE_WHITELIST = {
+    'cafe', 'bakery', 'restaurant', 'fast_food', 'meal_takeaway', 'bar',
+    'atm', 'bank', 'pharmacy', 'hospital', 'doctor', 'dentist', 'health',
+    'gym', 'stadium', 'amusement_park', 'bowling_alley', 'movie_theater', 'spa',
+    'park', 'natural_feature', 'campground',
+    'supermarket', 'convenience_store', 'shopping_mall', 'store',
+    'school', 'primary_school', 'secondary_school', 'university', 'library',
+    'subway_station', 'bus_station', 'train_station', 'transit_station', 'light_rail_station',
+}
+
+SECONDARY_BY_GOOGLE_TYPE = [
+    ('food', {'cafe', 'bakery', 'restaurant', 'fast_food', 'meal_takeaway', 'bar'}),
+    ('finance', {'atm', 'bank'}),
+    ('health', {'pharmacy', 'hospital', 'doctor', 'dentist', 'health'}),
+    ('leisure', {'gym', 'stadium', 'amusement_park', 'bowling_alley', 'movie_theater', 'spa'}),
+    ('nature_place', {'park', 'natural_feature', 'campground'}),
+    ('shops', {'supermarket', 'convenience_store', 'shopping_mall', 'store'}),
+    ('education', {'school', 'primary_school', 'secondary_school', 'university', 'library'}),
+    ('transport', {'subway_station', 'bus_station', 'train_station', 'transit_station', 'light_rail_station'}),
+]
+
+
+def google_types_to_badges(types: List[str]) -> List[str]:
+    return [t for t in types if t in BADGE_TYPE_WHITELIST]
+
+
+def google_types_to_secondary(types: List[str]) -> List[str]:
+    secondary: List[str] = []
+    types_set = set(types or [])
+    for category, type_set in SECONDARY_BY_GOOGLE_TYPE:
+        if types_set & type_set:
+            secondary.append(category)
+    return secondary
+
 
 class GooglePlacesClient:
     """Klient do pobierania POI z Google Places API."""
@@ -154,7 +188,7 @@ class GooglePlacesClient:
             unique_pois = []
             
             for poi in pois_by_category[cat]:
-                place_id = poi.tags.get('place_id')
+                place_id = poi.place_id or poi.tags.get('place_id')
                 
                 # Primary: dedupe po place_id
                 if place_id:
@@ -234,6 +268,12 @@ class GooglePlacesClient:
                     break
             
             distance = self._haversine_distance(ref_lat, ref_lon, place_lat, place_lon)
+            types = place.get('types', []) or []
+            secondary = google_types_to_secondary(types)
+            if our_category in secondary:
+                secondary = [c for c in secondary if c != our_category]
+            secondary = secondary[:1]
+            badges = google_types_to_badges(types)
             
             return POI(
                 lat=place_lat,
@@ -247,9 +287,13 @@ class GooglePlacesClient:
                     'rating': place.get('rating'),
                     'user_ratings_total': place.get('user_ratings_total'),
                     'types': place.get('types', []),
+                    'source': 'google_fallback',
                 },
+                source='google_fallback',
+                place_id=place.get('place_id'),
                 primary_category=our_category,
-                secondary_categories=[],
+                secondary_categories=secondary,
+                badges=badges,
             )
         except Exception as e:
             logger.warning(f"Error creating POI from Google place: {e}")
@@ -303,7 +347,7 @@ class GooglePlacesClient:
         if not self.api_key:
             return None
         
-        fields = fields or ['rating', 'user_ratings_total', 'geometry', 'place_id']
+        fields = fields or ['rating', 'user_ratings_total', 'geometry', 'place_id', 'types']
         
         try:
             # 1. Nearby Search z keyword - szukamy w małym promieniu od POI

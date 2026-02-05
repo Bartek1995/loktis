@@ -31,9 +31,13 @@ class POI:
     subcategory: str
     distance_m: float
     tags: dict
+    source: str = "osm"
     primary_category: Optional[str] = None
     secondary_categories: List[str] = field(default_factory=list)
+    category_scores: Dict[str, float] = field(default_factory=dict)
+    badges: List[str] = field(default_factory=list)
     osm_uid: Optional[str] = None
+    place_id: Optional[str] = None
 
 class OverpassClient:
     """Klient do pobierania danych z OSM."""
@@ -116,6 +120,9 @@ class OverpassClient:
         },
         'nature_place': {
             'query': '["leisure"~"park|garden|nature_reserve"]',
+            'alt_queries': [
+                '["boundary"="national_park"]',
+            ],
             'name': 'Parki i ogrody',
             'subcategories': {
                 'park': 'Park',
@@ -209,62 +216,66 @@ class OverpassClient:
 
         shop = tags.get('shop')
         if shop:
-            add('shops', 5)
+            add('shops', 1.0)
 
         amenity = tags.get('amenity')
         if amenity in ['restaurant', 'cafe', 'fast_food']:
-            add('food', 5)
+            add('food', 1.0)
         elif amenity == 'bar':
-            add('food', 3)
+            add('food', 0.6)
         elif amenity in ['pharmacy', 'doctors', 'hospital', 'clinic']:
-            add('health', 5)
+            add('health', 1.0)
         elif amenity in ['school', 'kindergarten', 'university', 'college']:
-            add('education', 5)
+            add('education', 1.0)
         elif amenity in ['bank', 'atm']:
-            add('finance', 5)
+            add('finance', 1.0)
         elif amenity == 'fuel':
             # Stacja paliw - zwykle sklep + szybkie jedzenie/kawa
-            add('shops', 3)
-            add('food', 2)
+            add('shops', 1.0)
+            add('food', 0.8)
 
         public_transport = tags.get('public_transport')
         if public_transport in ['stop_position', 'platform']:
-            add('transport', 5)
+            add('transport', 1.0)
 
         highway = tags.get('highway')
         if highway == 'bus_stop':
-            add('transport', 5)
+            add('transport', 1.0)
 
         railway = tags.get('railway')
         if railway in ['tram_stop', 'station']:
-            add('transport', 5)
+            add('transport', 1.0)
         if railway in ['tram', 'rail']:
-            add('roads', 5)
+            add('roads', 1.0)
 
         leisure = tags.get('leisure')
         if leisure in NATURE_PLACE_TYPES:
-            add('nature_place', 5)
+            add('nature_place', 1.0)
         elif leisure in ['playground', 'fitness_centre', 'pitch', 'sports_centre', 'stadium', 'swimming_pool']:
-            add('leisure', 5)
+            add('leisure', 1.0)
 
         landuse = tags.get('landuse')
         if landuse in LANDCOVER_TYPES or landuse in WATER_TYPES:
-            add('nature_background', 5)
+            add('nature_background', 1.0)
 
         natural = tags.get('natural')
         if natural == 'wood' or natural in WATER_TYPES:
-            add('nature_background', 5)
+            add('nature_background', 1.0)
 
         water = tags.get('water')
         if water in WATER_TYPES:
-            add('nature_background', 5)
+            add('nature_background', 1.0)
 
         waterway = tags.get('waterway')
         if waterway in ['river', 'stream', 'canal']:
-            add('nature_background', 5)
+            add('nature_background', 1.0)
+
+        boundary = tags.get('boundary')
+        if boundary == 'national_park':
+            add('nature_place', 1.0)
 
         if highway in ['motorway', 'trunk', 'primary', 'secondary', 'tertiary']:
-            add('roads', 5)
+            add('roads', 1.0)
 
         return scores
 
@@ -477,6 +488,7 @@ class OverpassClient:
                     primary_category=primary_category,
                     secondary_categories=secondary_categories,
                     osm_uid=osm_uid,
+                    category_scores=scores,
                 )
                 if poi:
                     pois_by_category[cat].append(poi)
@@ -511,6 +523,7 @@ class OverpassClient:
         primary_category: Optional[str] = None,
         secondary_categories: Optional[List[str]] = None,
         osm_uid: Optional[str] = None,
+        category_scores: Optional[Dict[str, float]] = None,
     ) -> Optional[POI]:
         """Tworzy obiekt POI dla danej kategorii."""
         config = self.POI_QUERIES.get(category, {})
@@ -584,6 +597,10 @@ class OverpassClient:
             # Oznacz jako bezimienne dla niższego priorytetu w raporcie
             tags['_nameless'] = True
 
+        if osm_uid:
+            tags['osm_uid'] = osm_uid
+        tags['source'] = 'osm'
+
         distance = self._haversine_distance(ref_lat, ref_lon, lat, lon)
         
         return POI(
@@ -594,8 +611,10 @@ class OverpassClient:
             subcategory=subcategory,
             distance_m=round(distance),
             tags=tags,
+            source='osm',
             primary_category=primary_category or category,
             secondary_categories=secondary_categories or [],
+            category_scores=category_scores or {},
             osm_uid=osm_uid,
         )
 

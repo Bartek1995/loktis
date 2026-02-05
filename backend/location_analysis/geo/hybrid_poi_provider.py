@@ -13,7 +13,7 @@ from typing import Dict, List, Any, Tuple, Optional
 from dataclasses import dataclass
 
 from .overpass_client import OverpassClient, POI, MAX_POIS_PER_CATEGORY
-from .google_places_client import GooglePlacesClient
+from .google_places_client import GooglePlacesClient, google_types_to_badges, google_types_to_secondary
 from .nature_metrics import NatureMetrics
 
 logger = logging.getLogger(__name__)
@@ -169,6 +169,7 @@ class HybridPOIProvider:
                         poi = self.google._create_poi_from_place(place, category, lat, lon)
                         if poi and not self._is_duplicate(poi, pois[category]):
                             poi.tags['source'] = 'google_fallback'
+                            poi.source = 'google_fallback'
                             pois[category].append(poi)
                             
                 except Exception as e:
@@ -231,7 +232,7 @@ class HybridPOIProvider:
                 
                 try:
                     # Sprawdź cache najpierw (jeśli mamy place_id)
-                    existing_place_id = poi.tags.get('place_id')
+                    existing_place_id = poi.place_id or poi.tags.get('place_id')
                     cache_key = f"details:{existing_place_id}" if existing_place_id else None
                     details = None
                     
@@ -254,7 +255,7 @@ class HybridPOIProvider:
                             logger.debug(f"Direct details lookup for {poi.name} (place_id known)")
                             details = self.google._get_place_details(
                                 existing_place_id, 
-                                ['rating', 'user_ratings_total', 'geometry', 'place_id']
+                                ['rating', 'user_ratings_total', 'geometry', 'place_id', 'types']
                             )
                             if details:
                                 details['place_id'] = existing_place_id  # Upewnij się że place_id jest w response
@@ -277,6 +278,7 @@ class HybridPOIProvider:
                             cache_key = f"details:{final_place_id}"
                             google_details_cache.set(cache_key, details or {'_not_found': True})
                             poi.tags['place_id'] = final_place_id
+                            poi.place_id = final_place_id
                         elif not details:
                             # Negative cache: POI nie znaleziony w Google (24h)
                             neg_key = f"notfound:{poi.name}:{round(poi.lat,3)}:{round(poi.lon,3)}"
@@ -312,24 +314,41 @@ class HybridPOIProvider:
 
                         rating = details.get('rating')
                         reviews = details.get('user_ratings_total', 0)
+                        types = details.get('types') or poi.tags.get('types') or []
                         
                         # Dopisz do tags
                         poi.tags['rating'] = rating
                         poi.tags['reviews_count'] = reviews
                         poi.tags['user_ratings_total'] = reviews
                         poi.tags['enriched'] = True
+                        if types:
+                            poi.tags['types'] = types
                         
                         # Ustal finalne place_id i dodaj do seen (ZAWSZE po enrichment)
                         final_place_id = poi.tags.get('place_id') or details.get('place_id')
                         if final_place_id:
                             poi.tags['place_id'] = final_place_id
+                            poi.place_id = final_place_id
                             seen_place_ids.add(final_place_id)
-                        
+
+                        # Badges + secondary kategorie z Google types
+                        if types:
+                            poi.badges = list(set(poi.badges) | set(google_types_to_badges(types)))
+                            secondary = google_types_to_secondary(types)
+                            if poi.primary_category:
+                                secondary = [c for c in secondary if c != poi.primary_category]
+                            if secondary:
+                                # Max 1 secondary (primary + secondary)
+                                poi.secondary_categories = list(set(poi.secondary_categories) | set(secondary[:1]))
+
                         # Oznacz jako "mało opinii" jeśli poniżej progu
                         if reviews < config.min_reviews_to_show:
                             poi.tags['low_reviews'] = True
                         
                         enriched_count += 1
+                        poi.tags['source'] = 'google_enriched'
+                        poi.source = 'google_enriched'
+
                         logger.debug(
                             f"Enriched: {poi.name} dist={poi.distance_m:.0f}m "
                             f"place_id={final_place_id} rating={rating} reviews={reviews}"
@@ -345,11 +364,11 @@ class HybridPOIProvider:
         Sprawdza czy POI już istnieje.
         Priorytet: place_id > (nazwa + dystans < 50m).
         """
-        new_place_id = new_poi.tags.get('place_id')
+        new_place_id = new_poi.place_id or new_poi.tags.get('place_id')
         
         for poi in existing:
             # Sprawdź po place_id (najbardziej niezawodne)
-            if new_place_id and poi.tags.get('place_id') == new_place_id:
+            if new_place_id and (poi.place_id or poi.tags.get('place_id')) == new_place_id:
                 return True
             
             # Fallback: nazwa + bliska odległość
@@ -367,7 +386,7 @@ class HybridPOIProvider:
             unique_items = []
             
             for poi in items:
-                place_id = poi.tags.get('place_id')
+                place_id = poi.place_id or poi.tags.get('place_id')
                 if place_id:
                     if place_id in seen_place_ids:
                         continue
