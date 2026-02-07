@@ -145,6 +145,7 @@ class AnalysisService:
         user_profile: str = 'family',  # Legacy - mapujemy na profile_key
         poi_provider: str = 'overpass',
         profile_key: str = None,  # Nowy parametr - klucz profilu
+        radius_overrides: Dict[str, int] = None,  # User-defined radius per category
     ):
         """
         Generator analizy lokalizacji (location-first model).
@@ -153,6 +154,7 @@ class AnalysisService:
         Args:
             profile_key: Klucz nowego profilu (urban, family, quiet_green, remote_work, active_sport, car_first)
             user_profile: [LEGACY] Stary parametr - mapowany na profile_key jeśli profile_key nie podany
+            radius_overrides: Opcjonalne nadpisanie promieni per kategoria (np. {'shops': 800})
         """
         import json
         
@@ -162,9 +164,17 @@ class AnalysisService:
             
             # Pobierz nowy profil konfiguracyjny
             profile = get_profile(effective_profile_key)
+            
+            # Apply user overrides to profile radii
+            effective_radius_m = dict(profile.radius_m)  # Copy defaults
+            if radius_overrides:
+                for category, override_radius in radius_overrides.items():
+                    if category in effective_radius_m:
+                        effective_radius_m[category] = override_radius
+                        logger.info(f"Radius override: {category} = {override_radius}m (was {profile.radius_m.get(category)}m)")
 
-            # Ustal promien pobierania POI = max promien per kategoria w profilu
-            profile_radius_max = max(profile.radius_m.values()) if profile.radius_m else radius
+            # Ustal promien pobierania POI = max promien per kategoria (including overrides)
+            profile_radius_max = max(effective_radius_m.values()) if effective_radius_m else radius
             fetch_radius = max(radius, profile_radius_max)
             
             # Legacy: pobierz też starą personę dla kompatybilności wstecznej
@@ -203,7 +213,12 @@ class AnalysisService:
             try:
                 provider_label = 'Google Places' if poi_provider == 'google' else ('Hybrid' if poi_provider == 'hybrid' else 'Overpass')
                 yield json.dumps({'status': 'map', 'message': f'Analiza mapy ({provider_label}, promień {fetch_radius}m)...'}) + '\n'
-                pois, metrics = self._get_pois(lat, lon, fetch_radius, use_cache=True, provider=poi_provider)
+                pois, metrics = self._get_pois(
+                    lat, lon, fetch_radius, 
+                    use_cache=True, 
+                    provider=poi_provider,
+                    radius_by_category=effective_radius_m  # Pass per-category radius!
+                )
 
                 # Debug: zrzut wykrytych POI (top 10 per kategoria)
                 if logger.isEnabledFor(logging.DEBUG):
@@ -233,7 +248,7 @@ class AnalysisService:
                 }) + '\n'
                 
                 # 2. NOWY: Profile-based scoring z krzywymi spadku
-                profile_engine = create_scoring_engine(effective_profile_key)
+                profile_engine = create_scoring_engine(effective_profile_key, radius_overrides)
                 profile_scoring_result = profile_engine.calculate(
                     pois_by_category=pois,
                     quiet_score=neighborhood_score.quiet_score or 50.0,
@@ -265,6 +280,21 @@ class AnalysisService:
                 poi_stats=poi_stats,
                 all_pois=pois
             )
+            
+            # Dodaj parametry generowania raportu
+            from datetime import datetime
+            report.generation_params = {
+                'generated_at': datetime.now().isoformat(),
+                'profile': {
+                    'key': effective_profile_key,
+                    'name': profile.name,
+                    'emoji': profile.emoji,
+                },
+                'radii': effective_radius_m,
+                'fetch_radius': fetch_radius,
+                'poi_provider': poi_provider,
+                'coords': {'lat': lat, 'lon': lon},
+            }
             
             # Zapisz do bazy i pobierz public_id
             saved_analysis = self._save_location_to_db(
@@ -331,20 +361,29 @@ class AnalysisService:
         lon: float,
         radius: int,
         use_cache: bool,
-        provider: str = 'hybrid' # Changed default provider to 'hybrid'
+        provider: str = 'hybrid',
+        radius_by_category: Dict[str, int] = None  # NEW: per-category radius
     ) -> tuple:
         """
         Pobiera POI i metryki (z cache jeśli dostępne).
         
         Args:
-            provider: 'overpass', 'google', lub 'hybrid' (domyślny) # Updated docstring
+            provider: 'overpass', 'google', lub 'hybrid' (domyślny)
+            radius_by_category: Per-category radius limits for filtering
         
         Returns:
             tuple: (pois_by_category, metrics)
         """
         # Normalizuj koordynaty dla lepszego cache hit rate (~11m grid)
         norm_lat, norm_lon = normalize_coords(lat, lon, precision=4)
-        cache_key = TTLCache.make_key('pois', norm_lat, norm_lon, radius, provider)
+        
+        # Include radius_by_category in cache key if provided
+        cache_suffix = ""
+        if radius_by_category:
+            # Create stable hash for category radii
+            sorted_items = sorted(radius_by_category.items())
+            cache_suffix = "|" + "|".join(f"{k}:{v}" for k, v in sorted_items)
+        cache_key = TTLCache.make_key('pois', norm_lat, norm_lon, radius, provider) + cache_suffix
         
         if use_cache:
             cached = overpass_cache.get(cache_key)
@@ -353,19 +392,26 @@ class AnalysisService:
                 return cached
         
         # Wybór klienta
-        if provider == 'hybrid': # Added hybrid provider logic
+        if provider == 'hybrid':
             logger.info(f"Pobieranie POI HYBRID (Overpass + Google enrichment): ({lat}, {lon}) r={radius}")
-            pois, metrics = self.hybrid_provider.get_pois_hybrid(lat, lon, radius)
+            pois, metrics = self.hybrid_provider.get_pois_hybrid(
+                lat, lon, radius,
+                radius_by_category=radius_by_category  # Pass per-category radius!
+            )
         elif provider == 'google':
             logger.info(f"Pobieranie POI z Google Places: ({lat}, {lon}) r={radius}")
             pois, metrics = self.google_places_client.get_pois_around(lat, lon, radius)
         else:
             logger.info(f"Pobieranie POI z Overpass: ({lat}, {lon}) r={radius}")
             pois, metrics = self.overpass_client.get_pois_around(lat, lon, radius)
+            # Apply filter for non-hybrid providers too
+            if radius_by_category:
+                from .geo.poi_filter import filter_by_radius
+                pois = filter_by_radius(pois, radius_by_category, default_radius=radius)
         
         result = (pois, metrics)
         if use_cache:
-            overpass_cache.set(cache_key, result, ttl=86400)  # 24h
+            overpass_cache.set(cache_key, result, ttl=604800)  # 7 dni
         
         return result
     
@@ -423,7 +469,6 @@ class AnalysisService:
         user_profile: str = 'family',
         profile_key: str = None,
         profile_scoring_result = None,
-        legacy_scoring_result = None,
         verdict = None,
     ) -> Optional[LocationAnalysis]:
         """Zapisuje wynik analizy lokalizacji do bazy danych."""
@@ -431,13 +476,12 @@ class AnalysisService:
             # Generuj hash na podstawie lokalizacji
             url_hash = LocationAnalysis.generate_hash(lat=lat, lon=lon)
             url = reference_url or f"location://{lat},{lon}"
-            
+
             # Dodaj public_id do report_data
             report_dict = report.to_dict()
-            
+
             # Przygotuj dane scoringu
             scoring_data = profile_scoring_result.to_dict() if profile_scoring_result else {}
-            legacy_scoring_data = legacy_scoring_result.to_dict() if legacy_scoring_result else {}
             verdict_data = verdict.to_dict() if verdict else {}
             
             # Wyciągnij category_scores z nowego scoringu
@@ -451,7 +495,6 @@ class AnalysisService:
             # Debug info
             scoring_debug = {
                 'profile_scoring': scoring_data,
-                'legacy_scoring': legacy_scoring_data,
             }
             
             persona_adjusted_score = profile_scoring_result.total_score if profile_scoring_result else None

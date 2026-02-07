@@ -57,6 +57,7 @@ class AnalyzeLocationView(APIView):
         profile_key = serializer.validated_data.get('profile_key', None)
         user_profile = serializer.validated_data.get('user_profile', 'family')
         poi_provider = serializer.validated_data.get('poi_provider', 'overpass')
+        radius_overrides = serializer.validated_data.get('radius_overrides', None)
         
         # Użyj profile_key jeśli podany, inaczej fallback na user_profile
         effective_profile = profile_key or user_profile
@@ -75,6 +76,7 @@ class AnalyzeLocationView(APIView):
                 user_profile=user_profile,
                 profile_key=profile_key,
                 poi_provider=poi_provider,
+                radius_overrides=radius_overrides,
             ),
             content_type='application/x-ndjson'
         )

@@ -71,5 +71,5 @@ input[type="number"] {
 
 /* Shadow box */
 .shadow-box {
-  @apply bg-white rounded-lg shadow-md;
+  @apply bg-white rounded-xl shadow-lg border border-gray-100;
 }

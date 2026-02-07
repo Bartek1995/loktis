@@ -492,6 +492,44 @@ PROFILE_INVESTOR = ProfileConfig(
 )
 
 
+PROFILE_CUSTOM = ProfileConfig(
+    key="custom",
+    name="Skompunuj sam",
+    description="Pełna kontrola nad parametrami analizy",
+    emoji="🎛️",
+    
+    weights={
+        # Neutralne wagi - równomierne dla wszystkich kategorii
+        Category.TRANSPORT.value: 0.15,
+        Category.SHOPS.value: 0.15,
+        Category.EDUCATION.value: 0.12,
+        Category.HEALTH.value: 0.12,
+        Category.NATURE_PLACE.value: 0.10,
+        Category.NATURE_BACKGROUND.value: 0.08,
+        Category.LEISURE.value: 0.10,
+        Category.FOOD.value: 0.10,
+        Category.FINANCE.value: 0.08,
+        Category.NOISE.value: -0.05,  # Standardowa kara za hałas
+    },
+    
+    radius_m={
+        # Środkowe wartości jako punkt startowy
+        Category.TRANSPORT.value: 900,
+        Category.SHOPS.value: 800,
+        Category.EDUCATION.value: 1200,
+        Category.HEALTH.value: 1500,
+        Category.NATURE_PLACE.value: 1000,
+        Category.NATURE_BACKGROUND.value: 450,
+        Category.LEISURE.value: 900,
+        Category.FOOD.value: 800,
+        Category.FINANCE.value: 800,
+    },
+    
+    thresholds=VerdictThresholds(recommended=65, conditional=45),
+    critical_caps=[],  # Brak critical caps - użytkownik ma pełną kontrolę
+)
+
+
 # ==============================================================================
 # REGISTRY
 # ==============================================================================
@@ -505,6 +543,7 @@ PROFILE_REGISTRY: Dict[str, ProfileConfig] = {
     "active_sport": PROFILE_ACTIVE_SPORT,
     "car_first": PROFILE_CAR_FIRST,
     "investor": PROFILE_INVESTOR,
+    "custom": PROFILE_CUSTOM,
 }
 
 DEFAULT_PROFILE_KEY = "family"

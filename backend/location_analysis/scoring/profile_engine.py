@@ -727,7 +727,30 @@ class ProfileScoringEngine:
         return warnings
 
 
-def create_scoring_engine(profile_key: str) -> ProfileScoringEngine:
-    """Factory function do tworzenia silnika scoringu."""
+def create_scoring_engine(
+    profile_key: str,
+    radius_overrides: Optional[Dict[str, int]] = None,
+) -> ProfileScoringEngine:
+    """
+    Factory function do tworzenia silnika scoringu.
+    
+    Args:
+        profile_key: Klucz profilu (urban, family, etc.)
+        radius_overrides: Opcjonalne nadpisanie promieni per kategoria
+    """
+    from dataclasses import replace
+    
     profile = get_profile(profile_key)
+    
+    # Apply radius overrides if provided
+    if radius_overrides:
+        effective_radius_m = dict(profile.radius_m)
+        for category, override_radius in radius_overrides.items():
+            if category in effective_radius_m:
+                effective_radius_m[category] = override_radius
+                logger.info(f"ScoringEngine radius override: {category} = {override_radius}m")
+        
+        # Create a modified profile with the new radii
+        profile = replace(profile, radius_m=effective_radius_m)
+    
     return ProfileScoringEngine(profile)

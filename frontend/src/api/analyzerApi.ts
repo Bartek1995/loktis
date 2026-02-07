@@ -41,11 +41,18 @@ export interface POIItem {
   name: string;
   distance_m: number;
   subcategory: string;
+  badges?: string[];
+  secondary_categories?: string[];
+  source?: string | null;
+  rating?: number | null;
+  reviews?: number | null;
 }
 
 export interface POICategoryStats {
   name: string;
   count: number;
+  count_secondary?: number;
+  count_total?: number;
   nearest: number;
   items: POIItem[];
 }
@@ -200,6 +207,15 @@ export interface AnalysisReport {
   profile?: ProfileData;
   scoring?: ProfileScoringData;
   verdict?: VerdictData;
+  // Generation parameters
+  generation_params?: {
+    generated_at: string;
+    profile: { key: string; name: string; emoji: string };
+    radii: Record<string, number>;
+    fetch_radius: number;
+    poi_provider: string;
+    coords: { lat: number; lon: number };
+  };
 }
 
 export interface ValidationResult {
@@ -292,25 +308,27 @@ export const analyzerApi = {
         
         for (const line of lines) {
           if (!line.trim()) continue;
+          let event;
           try {
-            const event = JSON.parse(line);
-            onStatus(event);
-            
-            if (event.status === 'complete') {
-              return event.result;
-            }
-            if (event.status === 'error') {
-              throw new Error(event.error || 'Wystąpił błąd analizy');
-            }
+            event = JSON.parse(line);
           } catch (e) {
             console.warn('Błąd parsowania linii streamu:', e);
+            continue;
+          }
+          onStatus(event);
+
+          if (event.status === 'complete') {
+            return event.result;
+          }
+          if (event.status === 'error') {
+            throw new Error(event.error || 'Wystąpił błąd analizy');
           }
         }
       }
     } finally {
       reader.cancel();
     }
-    
+
     throw new Error('Strumień zakończony bez wyniku');
   },
 
@@ -329,7 +347,8 @@ export const analyzerApi = {
     referenceUrl?: string,
     onStatus?: (event: { status: string; message?: string; result?: AnalysisReport; error?: string }) => void,
     profileKey: string = 'family',  // Nowy system profili
-    poiProvider: 'overpass' | 'google' | 'hybrid' = 'hybrid'
+    poiProvider: 'overpass' | 'google' | 'hybrid' = 'hybrid',
+    radiusOverrides?: Record<string, number>  // User-defined radius per category
   ): Promise<AnalysisReport> {
     const body: Record<string, unknown> = { 
       latitude: lat, 
@@ -344,6 +363,9 @@ export const analyzerApi = {
     };
     if (referenceUrl) {
       body.reference_url = referenceUrl;
+    }
+    if (radiusOverrides && Object.keys(radiusOverrides).length > 0) {
+      body.radius_overrides = radiusOverrides;
     }
 
     const response = await fetch(`${API_BASE_URL}/analyze-location/`, {
@@ -371,18 +393,20 @@ export const analyzerApi = {
         
         for (const line of lines) {
           if (!line.trim()) continue;
+          let event;
           try {
-            const event = JSON.parse(line);
-            onStatus?.(event);
-            
-            if (event.status === 'complete') {
-              return event.result;
-            }
-            if (event.status === 'error') {
-              throw new Error(event.error || 'Wystąpił błąd analizy');
-            }
+            event = JSON.parse(line);
           } catch (e) {
             console.warn('Błąd parsowania linii streamu:', e);
+            continue;
+          }
+          onStatus?.(event);
+
+          if (event.status === 'complete') {
+            return event.result;
+          }
+          if (event.status === 'error') {
+            throw new Error(event.error || 'Wystąpił błąd analizy');
           }
         }
       }

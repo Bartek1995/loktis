@@ -21,6 +21,17 @@ NATURE_PLACE_TYPES = frozenset({'park', 'garden', 'nature_reserve'})
 # Max POI per category
 MAX_POIS_PER_CATEGORY = 30
 
+# Known shop types whitelist for subcategory normalization
+KNOWN_SHOP_TYPES = frozenset({
+    'supermarket', 'convenience', 'mall', 'bakery', 'clothes', 'hairdresser',
+    'beauty', 'kiosk', 'alcohol', 'florist', 'greengrocer', 'butcher',
+    'car_repair', 'doityourself', 'drugstore', 'books', 'electronics',
+    'shoes', 'furniture', 'jewelry', 'optician', 'gift', 'hardware',
+    'toys', 'sports', 'pet', 'chemist', 'perfumery', 'cosmetics',
+    'tobacco', 'newsagent', 'stationery', 'deli', 'confectionery',
+    'beverage', 'wine', 'garden_centre', 'mobile_phone', 'computer',
+})
+
 
 @dataclass
 class POI:
@@ -109,13 +120,22 @@ class OverpassClient:
             }
         },
         'health': {
-            'query': '["amenity"~"pharmacy|doctors|hospital|clinic"]',
+            'query': '["amenity"~"pharmacy|doctors|hospital|clinic|dentist|veterinary"]',
+            'alt_queries': [
+                '["healthcare"]',  # healthcare=doctor, healthcare=centre, etc.
+            ],
             'name': 'Zdrowie',
             'subcategories': {
                 'pharmacy': 'Apteka',
                 'doctors': 'Lekarz',
+                'doctor': 'Lekarz',  # healthcare=doctor
                 'hospital': 'Szpital',
                 'clinic': 'Przychodnia',
+                'centre': 'Przychodnia',  # healthcare=centre
+                'dentist': 'Dentysta',
+                'veterinary': 'Weterynarz',
+                'physiotherapist': 'Fizjoterapeuta',
+                'optometrist': 'Optyk',
             }
         },
         'nature_place': {
@@ -223,16 +243,20 @@ class OverpassClient:
             add('food', 1.0)
         elif amenity == 'bar':
             add('food', 0.6)
-        elif amenity in ['pharmacy', 'doctors', 'hospital', 'clinic']:
+        elif amenity in ['pharmacy', 'doctors', 'hospital', 'clinic', 'dentist', 'veterinary']:
             add('health', 1.0)
         elif amenity in ['school', 'kindergarten', 'university', 'college']:
             add('education', 1.0)
         elif amenity in ['bank', 'atm']:
             add('finance', 1.0)
         elif amenity == 'fuel':
-            # Stacja paliw - zwykle sklep + szybkie jedzenie/kawa
-            add('shops', 1.0)
-            add('food', 0.8)
+            # Stacja paliw -> transport (services), nie shops
+            add('transport', 0.8)
+        
+        # healthcare=* tag (doctor, centre, etc.)
+        healthcare = tags.get('healthcare')
+        if healthcare:
+            add('health', 1.0)
 
         public_transport = tags.get('public_transport')
         if public_transport in ['stop_position', 'platform']:
@@ -536,7 +560,16 @@ class OverpassClient:
         
         # Logika wyboru subkategorii specyficzna dla kategorii
         if category == 'shops':
-            subcategory = tags.get('shop', '')
+            raw_shop = tags.get('shop', '')
+            # Normalize: 'yes' or unknown -> 'general'
+            if raw_shop in ('yes', '') or raw_shop not in KNOWN_SHOP_TYPES:
+                # Check if it's a fuel station
+                if tags.get('amenity') == 'fuel':
+                    subcategory = 'fuel_station'
+                else:
+                    subcategory = 'general' if raw_shop else ''
+            else:
+                subcategory = raw_shop
         elif category == 'transport':
             if tags.get('highway') == 'bus_stop': subcategory = 'bus_stop'
             elif tags.get('railway') == 'tram_stop': subcategory = 'tram_stop'
@@ -545,7 +578,8 @@ class OverpassClient:
         elif category == 'education':
             subcategory = tags.get('amenity', '')
         elif category == 'health':
-            subcategory = tags.get('amenity', '')
+            # Prioritize: amenity > healthcare
+            subcategory = tags.get('amenity') or tags.get('healthcare') or ''
         elif category == 'nature_place':
             # Parki, ogrody, rezerwaty
             subcategory = tags.get('leisure', '')

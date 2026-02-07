@@ -40,6 +40,9 @@ class AnalysisReport:
     # Ograniczenia
     limitations: List[str] = field(default_factory=list)
     
+    # Parametry generowania raportu (profil, promienie, etc.)
+    generation_params: Dict[str, Any] = field(default_factory=dict)
+    
     def to_dict(self) -> dict:
         return {
             'success': self.success,
@@ -61,6 +64,7 @@ class AnalysisReport:
             },
             'checklist': self.checklist,
             'limitations': self.limitations,
+            'generation_params': self.generation_params,
         }
 
 
@@ -311,7 +315,7 @@ class ReportBuilder:
             'nature_background': '#06B6D4',  # cyan-500 (Woda, lasy, łąki)
             'nature': '#10B981',         # legacy (Zieleń)
             'leisure': '#F97316',        # orange-500 (Sport)
-            'food': '#EC4899',           # pink-500
+            'food': '#EC4899',           # pink-500p
             'finance': '#64748B',        # slate-500
         }
 
@@ -319,10 +323,25 @@ class ReportBuilder:
             'water', 'beach', 'river', 'stream', 'canal', 'lake', 'pond', 'reservoir'
         }
         
+        seen_keys = set()
         for category, pois in pois_by_category.items():
             for poi in pois:
-                color = category_colors.get(category, '#6B7280')
-                if category == 'nature_background' and (poi.subcategory or '').lower() in water_subcategories:
+                place_id = getattr(poi, 'place_id', None)
+                osm_uid = getattr(poi, 'osm_uid', None)
+                key = None
+                if place_id:
+                    key = f"place:{place_id}"
+                elif osm_uid:
+                    key = f"osm:{osm_uid}"
+                else:
+                    key = f"grid:{round(poi.lat,4)}:{round(poi.lon,4)}:{(poi.name or '').lower()}"
+                if key in seen_keys:
+                    continue
+                seen_keys.add(key)
+
+                marker_category = getattr(poi, 'primary_category', None) or category
+                color = category_colors.get(marker_category, '#6B7280')
+                if marker_category == 'nature_background' and (poi.subcategory or '').lower() in water_subcategories:
                     # Wyróżnij wodę innym kolorem na mapie
                     color = '#F97316'  # orange-500
 
@@ -330,7 +349,7 @@ class ReportBuilder:
                     'lat': poi.lat,
                     'lon': poi.lon,
                     'name': poi.name,
-                    'category': category,
+                    'category': marker_category,
                     'subcategory': poi.subcategory,
                     'color': color,
                     'distance': round(poi.distance_m) if poi.distance_m else None

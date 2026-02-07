@@ -78,6 +78,7 @@ class AnalyzeLocationRequestSerializer(serializers.Serializer):
             ('active_sport', 'Aktywny sportowo'),
             ('car_first', 'Pod auto / przedmieścia'),
             ('investor', 'Inwestor'),
+            ('custom', 'Skompunuj sam'),
         ],
         required=False,
         default='family',
@@ -89,6 +90,7 @@ class AnalyzeLocationRequestSerializer(serializers.Serializer):
             'urban', 'family', 'quiet_green', 'remote_work', 
             'active_sport', 'car_first',
             'investor',  # legacy
+            'custom',  # własny profil
         ],
         required=False,
         default='family',
@@ -99,6 +101,13 @@ class AnalyzeLocationRequestSerializer(serializers.Serializer):
         required=False,
         default='hybrid',
         help_text="Dostawca POI (overpass, google, hybrid)"
+    )
+    # User-defined radius overrides per category (e.g., {"shops": 800, "transport": 600})
+    radius_overrides = serializers.DictField(
+        child=serializers.IntegerField(min_value=100, max_value=5000),
+        required=False,
+        default=dict,
+        help_text="Nadpisanie promieni per kategoria (np. {'shops': 800})"
     )
 
 

@@ -3,7 +3,7 @@
  * Report View - wyświetla raport z analizy
  * Wersja zmigrowana do czystego Tailwind CSS
  */
-import { ref, computed, onMounted, nextTick, watch } from 'vue';
+import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
 import { analyzerApi, type AnalysisReport, type POICategoryStats, type TrafficAnalysis, type NatureMetrics, type POIItem } from '@/api/analyzerApi';
 import * as L from 'leaflet';
@@ -155,6 +155,188 @@ const greeneryLevelEmoji = computed(() => {
   return '🌵';
 });
 
+// Preferences Impact - shows how user settings affected the score
+interface PreferenceImpactItem {
+  category: string;
+  categoryName: string;
+  radius: number;
+  score: number;
+  poiCount: number;
+  nearestDistance: number | null;
+  detail: string;
+  emoji: string;
+}
+
+interface PreferencesImpactData {
+  topContributors: PreferenceImpactItem[];
+  limitingFactors: PreferenceImpactItem[];
+  hasData: boolean;
+}
+
+const categoryEmojis: Record<string, string> = {
+  shops: '🛒',
+  transport: '🚌',
+  education: '🎓',
+  health: '🏥',
+  nature_place: '🌳',
+  nature_background: '🌿',
+  leisure: '🏃',
+  food: '🍕',
+  finance: '🏦',
+};
+
+const preferencesImpact = computed<PreferencesImpactData | null>(() => {
+  const scoring = report.value?.scoring;
+  const radii = report.value?.generation_params?.radii;
+  
+  if (!scoring?.category_scores || !radii) return null;
+  
+  const items: PreferenceImpactItem[] = [];
+  
+  for (const [category, catScore] of Object.entries(scoring.category_scores)) {
+    if (!catScore || category === 'noise') continue;
+    
+    const radius = radii[category] || catScore.radius_used || 1000;
+    const nearestDist = catScore.nearest_distance_m;
+    
+    // Generate detail text
+    let detail = '';
+    if (catScore.poi_count > 0) {
+      if (nearestDist !== null) {
+        detail = `${catScore.poi_count} w zasięgu, najbliżej ${Math.round(nearestDist)}m`;
+      } else {
+        detail = `${catScore.poi_count} w zasięgu`;
+      }
+    } else {
+      detail = 'Brak w zasięgu analizy';
+    }
+    
+    items.push({
+      category,
+      categoryName: getCategoryName(category),
+      radius,
+      score: Math.round(catScore.score),
+      poiCount: catScore.poi_count,
+      nearestDistance: nearestDist,
+      detail,
+      emoji: categoryEmojis[category] || '📍',
+    });
+  }
+  
+  // Sort by score - top contributors are high, limiting are low
+  const sorted = [...items].sort((a, b) => b.score - a.score);
+  
+  // Top 3 contributors (score >= 50)
+  const topContributors = sorted.filter(i => i.score >= 50).slice(0, 3);
+  
+  // Limiting factors (score < 50), up to 3
+  const limitingFactors = sorted.filter(i => i.score < 50).slice(-3).reverse();
+  
+  return {
+    topContributors,
+    limitingFactors,
+    hasData: items.length > 0,
+  };
+});
+
+// AI Narrative Summary - human-readable verdict explanation
+const narrativeSummary = computed(() => {
+  if (!report.value?.scoring || !report.value?.verdict) return null;
+  
+  const score = report.value.scoring.total_score;
+  const verdict = report.value.verdict;
+  const profileName = report.value.generation_params?.profile?.name || 
+                      report.value.profile?.name || 'wybrany profil';
+  const strengths = report.value.scoring.strengths?.slice(0, 2) || [];
+  const weaknesses = report.value.scoring.weaknesses?.slice(0, 1) || [];
+  
+  let levelText = '';
+  if (verdict.level === 'recommended') {
+    levelText = 'bardzo dobrze dopasowana';
+  } else if (verdict.level === 'conditional') {
+    levelText = 'umiarkowanie dopasowana';
+  } else {
+    levelText = 'słabo dopasowana';
+  }
+  
+  return {
+    mainText: `Ta lokalizacja jest ${levelText} do profilu "${profileName}".`,
+    strengths: strengths.length > 0 ? `Mocne strony: ${strengths.join(', ')}.` : '',
+    weakness: weaknesses.length > 0 ? `Główny minus: ${weaknesses[0]}.` : '',
+    score,
+  };
+});
+
+// Main limiting factor - explains why score isn't higher
+const mainLimitingFactor = computed(() => {
+  if (!report.value?.scoring) return null;
+  
+  const scoring = report.value.scoring;
+  const totalScore = scoring.total_score;
+  
+  // Only show if score is not at max
+  if (totalScore >= 90) return null;
+  
+  // Check for critical caps
+  if (scoring.critical_caps_applied?.length > 0) {
+    const cappedCategory = scoring.critical_caps_applied[0];
+    if (cappedCategory) {
+      return {
+        reason: `Kategoria "${getCategoryName(cappedCategory)}" nie spełnia minimalnych wymagań profilu`,
+        type: 'critical_cap'
+      };
+    }
+  }
+  
+  // Check for noise penalty
+  if (scoring.noise_penalty > 5) {
+    return {
+      reason: `Wysoki poziom hałasu (kara: -${Math.round(scoring.noise_penalty)} pkt)`,
+      type: 'noise'
+    };
+  }
+  
+  // Check for roads penalty
+  if (scoring.roads_penalty && scoring.roads_penalty > 5) {
+    return {
+      reason: `Bliskość ruchliwych dróg (kara: -${Math.round(scoring.roads_penalty)} pkt)`,
+      type: 'roads'
+    };
+  }
+  
+  // Find lowest scoring category
+  const limitingFactors = preferencesImpact.value?.limitingFactors;
+  if (limitingFactors && limitingFactors.length > 0) {
+    const lowest = limitingFactors[0];
+    if (lowest && lowest.score < 30) {
+      return {
+        reason: `Brak wystarczającej liczby ${lowest.categoryName.toLowerCase()} w zasięgu (${lowest.radius}m)`,
+        type: 'category'
+      };
+    }
+  }
+  
+  return null;
+});
+
+// Edit preferences - go back to landing with current params preserved
+function editPreferences() {
+  if (!report.value) return;
+  
+  const params = {
+    lat: report.value.listing.latitude,
+    lng: report.value.listing.longitude,
+    address: report.value.listing.location || '',
+    price: report.value.listing.price,
+    areaSqm: report.value.listing.area_sqm,
+    profileKey: report.value.generation_params?.profile?.key || report.value.profile?.key || 'family',
+    radiusOverrides: report.value.generation_params?.radii || {},
+  };
+  
+  sessionStorage.setItem('editPreferencesData', JSON.stringify(params));
+  router.push({ name: 'landing' });
+}
+
 // Gallery State
 const displayGallery = ref(false);
 const activeImageIndex = ref(0);
@@ -167,6 +349,20 @@ function openGallery(index: number) {
 function closeGallery() {
     displayGallery.value = false;
 }
+
+function handleGalleryKeydown(e: KeyboardEvent) {
+  if (!displayGallery.value) return;
+  if (e.key === 'Escape') closeGallery();
+  else if (e.key === 'ArrowRight') nextImage();
+  else if (e.key === 'ArrowLeft') prevImage();
+}
+
+onMounted(() => {
+  window.addEventListener('keydown', handleGalleryKeydown);
+});
+onUnmounted(() => {
+  window.removeEventListener('keydown', handleGalleryKeydown);
+});
 
 function nextImage() {
     if (report.value?.listing.images) {
@@ -192,9 +388,14 @@ function analyzeAnother() {
   router.push({ name: 'landing' });
 }
 
+const hasRealUrl = computed(() => {
+  const url = report.value?.listing?.url;
+  return url && !url.startsWith('location://');
+});
+
 function openOriginalUrl() {
-  if (report.value?.listing?.url) {
-    window.open(report.value.listing.url, '_blank');
+  if (hasRealUrl.value) {
+    window.open(report.value!.listing.url, '_blank');
   }
 }
 
@@ -350,6 +551,48 @@ function getRatingColor(rating: string): string {
     brak: 'bg-slate-400 text-white',
   };
   return map[rating] || 'bg-slate-400 text-white';
+}
+
+function getBadgeLabel(badge: string): string {
+  const labels: Record<string, string> = {
+    cafe: 'kawa',
+    bakery: 'piekarnia',
+    restaurant: 'restauracja',
+    fast_food: 'fast food',
+    meal_takeaway: 'na wynos',
+    bar: 'bar',
+    atm: 'bankomat',
+    bank: 'bank',
+    pharmacy: 'apteka',
+    hospital: 'szpital',
+    doctor: 'lekarz',
+    dentist: 'dentysta',
+    health: 'zdrowie',
+    gym: 'siłownia',
+    stadium: 'stadion',
+    amusement_park: 'park rozrywki',
+    bowling_alley: 'kręgle',
+    movie_theater: 'kino',
+    spa: 'spa',
+    park: 'park',
+    natural_feature: 'teren naturalny',
+    campground: 'camping',
+    supermarket: 'supermarket',
+    convenience_store: 'sklep convenience',
+    shopping_mall: 'centrum handlowe',
+    store: 'sklep',
+    school: 'szkoła',
+    primary_school: 'szkoła',
+    secondary_school: 'szkoła',
+    university: 'uczelnia',
+    library: 'biblioteka',
+    subway_station: 'metro',
+    bus_station: 'dworzec',
+    train_station: 'dworzec',
+    transit_station: 'węzeł',
+    light_rail_station: 'tramwaj',
+  };
+  return labels[badge] || badge.replace(/_/g, ' ');
 }
 
 // Load Google Maps API dynamically
@@ -656,12 +899,21 @@ onMounted(async () => {
                 <i class="pi pi-share-alt"></i>
                 <span class="hidden sm:inline">Udostępnij</span>
               </button>
-              <button 
+              <button
+                v-if="hasRealUrl"
                 @click="openOriginalUrl"
                 class="px-4 py-2 rounded-xl border-2 border-slate-200 text-slate-600 font-medium hover:bg-slate-50 transition-colors flex items-center gap-2"
               >
                 <i class="pi pi-external-link"></i>
                 <span class="hidden sm:inline">Zobacz ogłoszenie</span>
+              </button>
+              <button 
+                @click="editPreferences"
+                class="px-4 py-2 rounded-xl border-2 border-blue-200 text-blue-600 font-medium hover:bg-blue-50 transition-colors flex items-center gap-2"
+                title="Wróć do konfiguracji z zachowanymi ustawieniami"
+              >
+                <i class="pi pi-pencil"></i>
+                <span class="hidden sm:inline">Zmień preferencje</span>
               </button>
               <button 
                 @click="analyzeAnother"
@@ -802,6 +1054,35 @@ onMounted(async () => {
             </div>
           </div>
           
+          <!-- AI Narrative Summary -->
+          <div v-if="narrativeSummary" class="mt-5 p-4 bg-gradient-to-r from-slate-50 to-gray-50 rounded-xl border border-slate-200">
+            <div class="flex items-start gap-3">
+              <div class="w-8 h-8 rounded-lg bg-gradient-to-br from-violet-400 to-purple-500 flex items-center justify-center flex-shrink-0">
+                <i class="pi pi-comments text-white text-sm"></i>
+              </div>
+              <div class="text-slate-700 leading-relaxed">
+                <span class="font-medium">{{ narrativeSummary.mainText }}</span>
+                <span v-if="narrativeSummary.strengths" class="text-emerald-600"> {{ narrativeSummary.strengths }}</span>
+                <span v-if="narrativeSummary.weakness" class="text-amber-600"> {{ narrativeSummary.weakness }}</span>
+              </div>
+            </div>
+          </div>
+          
+          <!-- Why not higher? Section -->
+          <div v-if="mainLimitingFactor" class="mt-4 p-4 bg-amber-50 border border-amber-200 rounded-xl">
+            <div class="flex items-start gap-3">
+              <div class="w-8 h-8 rounded-lg bg-amber-100 flex items-center justify-center flex-shrink-0">
+                <i class="pi pi-question-circle text-amber-600"></i>
+              </div>
+              <div>
+                <h4 class="font-semibold text-amber-800 mb-1">Dlaczego nie wyższa ocena?</h4>
+                <p class="text-sm text-amber-700">
+                  Główne ograniczenie: <strong>{{ mainLimitingFactor.reason }}</strong>
+                </p>
+              </div>
+            </div>
+          </div>
+          
           <!-- Scoring Details (collapsed by default) -->
           <details v-if="report!.scoring" class="mt-6">
             <summary class="cursor-pointer text-sm font-medium text-slate-500 hover:text-slate-700 transition-colors">
@@ -864,6 +1145,85 @@ onMounted(async () => {
               </p>
             </div>
           </details>
+        </div>
+        
+        <!-- Preferences Impact Section -->
+        <div v-if="preferencesImpact?.hasData" class="relative bg-white rounded-2xl p-6 shadow-lg border border-slate-100 overflow-hidden">
+          <div class="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-violet-400 via-purple-500 to-indigo-500"></div>
+          
+          <div class="flex items-center gap-3 mb-6">
+            <div class="w-12 h-12 rounded-xl bg-gradient-to-br from-violet-400 to-purple-600 flex items-center justify-center shadow-lg">
+              <i class="pi pi-sliders-h text-xl text-white"></i>
+            </div>
+            <div>
+              <h3 class="font-bold text-xl text-slate-800">Twoje preferencje – wpływ na ocenę</h3>
+              <p class="text-sm text-slate-500">Jak Twoje ustawienia wpłynęły na wynik</p>
+            </div>
+          </div>
+          
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <!-- Top Contributors -->
+            <div v-if="preferencesImpact.topContributors.length" class="bg-gradient-to-br from-emerald-50 to-green-50 rounded-xl p-4 border border-emerald-100">
+              <h4 class="font-semibold text-sm text-emerald-700 mb-3 flex items-center gap-2">
+                <span class="w-5 h-5 rounded-full bg-emerald-500 flex items-center justify-center">
+                  <i class="pi pi-arrow-up text-white text-xs"></i>
+                </span>
+                Najwięcej wniosły
+              </h4>
+              <div class="space-y-3">
+                <div 
+                  v-for="item in preferencesImpact.topContributors" 
+                  :key="item.category"
+                  class="flex items-start gap-3 p-3 bg-white/70 rounded-lg"
+                >
+                  <span class="text-xl">{{ item.emoji }}</span>
+                  <div class="flex-1 min-w-0">
+                    <div class="flex items-center justify-between gap-2">
+                      <span class="font-medium text-slate-800">{{ item.categoryName }}</span>
+                      <span class="text-xs font-mono px-2 py-0.5 bg-emerald-100 text-emerald-700 rounded">+{{ item.score }}pkt</span>
+                    </div>
+                    <div class="text-xs text-slate-500 mt-0.5">
+                      {{ item.radius }}m zasięg • {{ item.detail }}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            
+            <!-- Limiting Factors -->
+            <div v-if="preferencesImpact.limitingFactors.length" class="bg-gradient-to-br from-amber-50 to-orange-50 rounded-xl p-4 border border-amber-100">
+              <h4 class="font-semibold text-sm text-amber-700 mb-3 flex items-center gap-2">
+                <span class="w-5 h-5 rounded-full bg-amber-500 flex items-center justify-center">
+                  <i class="pi pi-arrow-down text-white text-xs"></i>
+                </span>
+                Ograniczające
+              </h4>
+              <div class="space-y-3">
+                <div 
+                  v-for="item in preferencesImpact.limitingFactors" 
+                  :key="item.category"
+                  class="flex items-start gap-3 p-3 bg-white/70 rounded-lg"
+                >
+                  <span class="text-xl">{{ item.emoji }}</span>
+                  <div class="flex-1 min-w-0">
+                    <div class="flex items-center justify-between gap-2">
+                      <span class="font-medium text-slate-800">{{ item.categoryName }}</span>
+                      <span class="text-xs font-mono px-2 py-0.5 bg-amber-100 text-amber-700 rounded">{{ item.score }}pkt</span>
+                    </div>
+                    <div class="text-xs text-slate-500 mt-0.5">
+                      {{ item.radius }}m zasięg • {{ item.detail }}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          
+          <!-- Tip to edit -->
+          <div class="mt-4 p-3 bg-slate-50 rounded-lg flex items-center gap-3 text-sm text-slate-600">
+            <i class="pi pi-info-circle text-blue-500"></i>
+            <span>Chcesz zmienić ustawienia? Kliknij <button @click="editPreferences" class="font-medium text-blue-600 hover:underline">Zmień preferencje</button> w górnym panelu.</span>
+          </div>
         </div>
         
         <!-- Dane z ogłoszenia -->
@@ -1183,6 +1543,13 @@ onMounted(async () => {
                           {{ (stats as POICategoryStats).count }}
                         </span>
                         <span class="text-sm text-slate-500">w okolicy</span>
+                        <span
+                          v-if="(stats as any).count_secondary"
+                          class="text-xs text-slate-400"
+                          :title="`+${(stats as any).count_secondary} z innych kategorii`"
+                        >
+                          +{{ (stats as any).count_secondary }}
+                        </span>
                       </div>
                     </div>
                   </div>
@@ -1223,17 +1590,28 @@ onMounted(async () => {
                   
                   <!-- Items List -->
                   <div v-if="(stats as POICategoryStats).items?.length" class="space-y-2">
-                    <div 
-                      v-for="item in (stats as POICategoryStats).items.slice(0, 3)" 
-                      :key="item.name"
+                    <div
+                      v-for="(item, idx) in (stats as POICategoryStats).items.slice(0, 3)"
+                      :key="`${category}-${idx}-${item.name}`"
                       class="flex items-center justify-between py-2 px-3 bg-slate-50 rounded-lg hover:bg-slate-100 transition-colors"
                     >
-                      <div class="flex items-center gap-2 min-w-0">
+                      <div class="flex items-start gap-2 min-w-0">
                         <span 
-                          class="w-2 h-2 rounded-full flex-shrink-0"
+                          class="w-2 h-2 rounded-full flex-shrink-0 mt-1"
                           :style="{ background: getPoiItemColor(category, item.subcategory) }"
                         ></span>
-                        <span class="truncate text-sm text-slate-700">{{ item.name }}</span>
+                        <div class="min-w-0">
+                          <div class="truncate text-sm text-slate-700">{{ item.name }}</div>
+                          <div v-if="item.badges?.length" class="flex flex-wrap gap-1 mt-1">
+                            <span
+                              v-for="badge in item.badges.slice(0, 3)"
+                              :key="badge"
+                              class="px-2 py-0.5 text-[10px] rounded-full bg-slate-200 text-slate-600"
+                            >
+                              {{ getBadgeLabel(badge) }}
+                            </span>
+                          </div>
+                        </div>
                       </div>
                       <div class="flex items-center gap-2">
                         <button
@@ -1261,6 +1639,83 @@ onMounted(async () => {
             </div>
           </div>
         </div>
+        
+        <!-- Generation Parameters (collapsed) -->
+        <details v-if="report!.generation_params" class="bg-white rounded-2xl shadow-lg border border-slate-100 overflow-hidden">
+          <summary class="cursor-pointer px-6 py-4 flex items-center gap-3 hover:bg-slate-50 transition-colors">
+            <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-slate-400 to-slate-600 flex items-center justify-center shadow">
+              <i class="pi pi-cog text-white"></i>
+            </div>
+            <div class="flex-1">
+              <h3 class="font-bold text-slate-800">Parametry analizy</h3>
+              <p class="text-xs text-slate-500">Kliknij, aby zobaczyć szczegóły</p>
+            </div>
+            <i class="pi pi-chevron-down text-slate-400"></i>
+          </summary>
+          
+          <div class="px-6 pb-6 border-t border-slate-100 pt-4">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <!-- Profile Info -->
+              <div class="bg-slate-50 rounded-xl p-4">
+                <h4 class="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">Profil</h4>
+                <div class="flex items-center gap-3">
+                  <span class="text-3xl">{{ report!.generation_params.profile?.emoji || '🏠' }}</span>
+                  <div>
+                    <p class="font-bold text-slate-800">{{ report!.generation_params.profile?.name || 'Standardowy' }}</p>
+                    <p class="text-xs text-slate-500">{{ report!.generation_params.profile?.key || 'urban' }}</p>
+                  </div>
+                </div>
+              </div>
+              
+              <!-- Coords & Time -->
+              <div class="bg-slate-50 rounded-xl p-4">
+                <h4 class="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">Dane</h4>
+                <div class="space-y-2 text-sm">
+                  <div class="flex justify-between">
+                    <span class="text-slate-500">Współrzędne:</span>
+                    <span class="font-mono text-slate-700">
+                      {{ report!.generation_params.coords?.lat?.toFixed(5) }}, {{ report!.generation_params.coords?.lon?.toFixed(5) }}
+                    </span>
+                  </div>
+                  <div class="flex justify-between">
+                    <span class="text-slate-500">Promień pobierania:</span>
+                    <span class="font-medium text-slate-700">{{ report!.generation_params.fetch_radius }}m</span>
+                  </div>
+                  <div class="flex justify-between">
+                    <span class="text-slate-500">Provider:</span>
+                    <span class="font-medium text-slate-700">{{ report!.generation_params.poi_provider }}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+            
+            <!-- Radii per category -->
+            <div v-if="report!.generation_params.radii" class="mt-6">
+              <h4 class="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">Promienie per kategoria</h4>
+              <div class="grid grid-cols-2 md:grid-cols-4 gap-2">
+                <div 
+                  v-for="(radius, category) in report!.generation_params.radii" 
+                  :key="category"
+                  class="bg-slate-50 rounded-lg p-3 flex items-center gap-2"
+                >
+                  <span 
+                    class="w-3 h-3 rounded-full flex-shrink-0"
+                    :style="{ background: getCategoryColor(category as string) }"
+                  ></span>
+                  <div class="min-w-0 flex-1">
+                    <p class="text-xs text-slate-500 truncate">{{ getCategoryName(category as string) }}</p>
+                    <p class="font-bold text-sm text-slate-700">{{ radius }}m</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+            
+            <!-- Generation time -->
+            <div v-if="report!.generation_params.generated_at" class="mt-4 text-xs text-slate-400 text-right">
+              Wygenerowano: {{ new Date(report!.generation_params.generated_at).toLocaleString('pl-PL') }}
+            </div>
+          </div>
+        </details>
       </div>
     </div>
   </div>

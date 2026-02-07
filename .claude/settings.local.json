@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx vue-tsc:*)",
+      "Bash(python manage.py test:*)",
+      "Bash(npm run build:*)"
+    ]
+  }
+}

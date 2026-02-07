@@ -67,9 +67,9 @@ class POIAnalyzer:
     }
     
     def analyze(
-        self, 
+        self,
         pois_by_category: Dict[str, List[POI]],
-        metrics: Dict[str, Any] = None
+        metrics: Optional[Dict[str, Any]] = None
     ) -> NeighborhoodScore:
         """
         Analizuje POI i metryki, zwraca scoring.
@@ -115,9 +115,9 @@ class POIAnalyzer:
         )
 
     def _calculate_quiet_score(
-        self, 
+        self,
         pois_by_category: Dict[str, List[POI]],
-        metrics: Dict[str, Any] = None
+        metrics: Optional[Dict[str, Any]] = None
     ) -> float:
         """Oblicza indeks spokoju (0-100)."""
         score = 60.0 # Baza: umiarkowanie spokojnie
@@ -325,18 +325,37 @@ class POIAnalyzer:
         for category, pois in pois_by_category.items():
             if not pois:
                 continue
-            
+
+            primary_items = []
+            secondary_count = 0
+            for p in pois:
+                primary = getattr(p, 'primary_category', None)
+                if primary and primary != category:
+                    secondary_count += 1
+                    continue
+                primary_items.append(p)
+
+            nearest_all = min(p.distance_m or 500 for p in pois)
+            nearest_primary = min((p.distance_m or 500 for p in primary_items), default=nearest_all)
+
             stats[category] = {
                 'name': category_names.get(category, category),
-                'count': len(pois),
-                'nearest': min(p.distance_m or 500 for p in pois),
+                'count': len(primary_items),
+                'count_secondary': secondary_count,
+                'count_total': len(pois),
+                'nearest': nearest_primary,
                 'items': [
                     {
                         'name': p.name,
                         'distance_m': round(p.distance_m or 0),
                         'subcategory': p.subcategory,
+                        'badges': list(getattr(p, 'badges', []) or []),
+                        'secondary_categories': list(getattr(p, 'secondary_categories', []) or []),
+                        'source': getattr(p, 'source', None),
+                        'rating': p.tags.get('rating'),
+                        'reviews': p.tags.get('user_ratings_total') or p.tags.get('reviews_count'),
                     }
-                    for p in pois[:10]  # Max 10 per category
+                    for p in primary_items[:10]  # Max 10 per category
                 ]
             }
         

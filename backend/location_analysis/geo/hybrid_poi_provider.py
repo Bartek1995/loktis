@@ -9,7 +9,7 @@ Warstwy:
 Optymalizuje koszt: ~$0.77 → ~$0.15-0.40 per analiza.
 """
 import logging
-from typing import Dict, List, Any, Tuple, Optional
+from typing import Dict, List, Any, Tuple, Optional, Iterable
 from dataclasses import dataclass
 
 from .overpass_client import OverpassClient, POI, MAX_POIS_PER_CATEGORY
@@ -33,28 +33,38 @@ class EnrichmentConfig:
 # max_distance_m zwiększone bo OSM i Google mają często przesunięcia 50-100m
 DEFAULT_ENRICHMENT_CONFIG = {
     'shops': EnrichmentConfig(top_k=5, enrich=True, max_distance_m=120, search_radius_m=120),
-    'education': EnrichmentConfig(top_k=3, enrich=True, max_distance_m=250, search_radius_m=200),
-    'health': EnrichmentConfig(top_k=3, enrich=True, max_distance_m=180, search_radius_m=150),
-    'food': EnrichmentConfig(top_k=3, enrich=True, max_distance_m=150, search_radius_m=120),
+    'education': EnrichmentConfig(top_k=3, enrich=True, max_distance_m=120, search_radius_m=120),
+    'health': EnrichmentConfig(top_k=3, enrich=True, max_distance_m=120, search_radius_m=120),
+    'food': EnrichmentConfig(top_k=3, enrich=True, max_distance_m=150, search_radius_m=150),
     'transport': EnrichmentConfig(top_k=3, enrich=False),  # OSM wystarczy
-    'nature_place': EnrichmentConfig(top_k=2, enrich=True, max_distance_m=200, search_radius_m=150),  # Parki
+    'nature_place': EnrichmentConfig(top_k=2, enrich=True, max_distance_m=150, search_radius_m=150),  # Parki
     'nature_background': EnrichmentConfig(top_k=0, enrich=False),  # Metryki, nie POI
-    'leisure': EnrichmentConfig(top_k=3, enrich=True, max_distance_m=150, search_radius_m=150),
+    'leisure': EnrichmentConfig(top_k=3, enrich=True, max_distance_m=80, search_radius_m=80),
     'finance': EnrichmentConfig(top_k=2, enrich=False),
 }
 
 # Typy Google do fallbacku per kategoria (minimalne)
 FALLBACK_TYPES = {
-    'shops': ['supermarket', 'convenience_store'],
+    'shops': ['supermarket', 'convenience_store', 'store'],
     'education': ['school'],
-    'health': ['pharmacy', 'hospital'],
-    'transport': ['bus_station', 'transit_station'],
-    'food': ['restaurant', 'cafe'],
+    'health': ['pharmacy', 'hospital', 'doctor', 'dentist', 'health'],
+    'transport': ['bus_station', 'transit_station', 'train_station'],
+    'food': ['restaurant', 'cafe', 'fast_food', 'bakery', 'meal_takeaway'],
     'finance': ['bank', 'atm'],
+    'nature_place': ['park'],
 }
 
-# Próg coverage - poniżej tego uruchamiamy fallback
-COVERAGE_THRESHOLD = 2
+# Progi coverage per kategoria
+DEFAULT_COVERAGE_THRESHOLD = 2
+COVERAGE_THRESHOLDS = {
+    'food': 3,
+    'finance': 2,
+    'health': 2,
+    'education': 2,
+    'shops': 5,
+    'transport': 2,
+    'nature_place': 2,
+}
 
 # Nazwy generic - nie enrichmentuj domyślnie (chyba że mało alternatyw i blisko)
 GENERIC_NAMES = frozenset({
@@ -94,22 +104,36 @@ class HybridPOIProvider:
         lat: float,
         lon: float,
         radius_m: int = 500,
+        radius_by_category: Optional[Dict[str, int]] = None,
         enable_enrichment: bool = True,
         enable_fallback: bool = True
     ) -> Tuple[Dict[str, List[POI]], Dict[str, Any]]:
         """
         Pobiera POI używając strategii 3-warstwowej.
         
+        Args:
+            radius_m: Globalny promień pobierania (max)
+            radius_by_category: Per-category radius limits (for filtering/fallback)
+        
         Returns:
             tuple: (pois_by_category, metrics)
         """
+        from .poi_filter import filter_by_radius, filter_by_membership
+        
+        # Domyślny radius_by_category = globalny promień dla wszystkich
+        effective_radius = radius_by_category or {}
+        
         # === WARSTWA 1: Overpass jako base ===
         logger.info(f"Hybrid: Layer 1 - Overpass base ({lat}, {lon}) r={radius_m}")
         pois, metrics = self.overpass.get_pois_around(lat, lon, radius_m)
         
-        # Policz coverage per kategoria
+        # Filtruj POI per-kategoria PRZED liczeniem coverage
+        if effective_radius:
+            pois = filter_by_radius(pois, effective_radius, default_radius=radius_m)
+        
+        # Policz coverage per kategoria (po filtrze!)
         coverage = {cat: len(items) for cat, items in pois.items()}
-        logger.debug(f"Hybrid: Overpass coverage: {coverage}")
+        logger.debug(f"Hybrid: Overpass coverage (after filter): {coverage}")
         
         # === WARSTWA 3: Fallback dla brakujących kategorii ===
         # (Robimy przed enrichment żeby mieć pełną listę do wzbogacenia)
@@ -117,7 +141,10 @@ class HybridPOIProvider:
             missing_categories = self._find_missing_categories(coverage)
             if missing_categories:
                 logger.info(f"Hybrid: Layer 3 - Fallback for: {missing_categories}")
-                self._apply_fallback(pois, lat, lon, radius_m, missing_categories)
+                self._apply_fallback(pois, lat, lon, effective_radius, radius_m, missing_categories)
+                # Re-filter after fallback (fallback already uses category radius)
+                if effective_radius:
+                    pois = filter_by_radius(pois, effective_radius, default_radius=radius_m)
         
         # === WARSTWA 2: Google enrichment dla top-k ===
         if enable_enrichment and self.google.api_key:
@@ -127,14 +154,29 @@ class HybridPOIProvider:
 
         # Final dedup po enrichment/fallback
         self._dedupe_pois(pois)
+
+        # Globalny merge/dedupe po place_id/osm_uid/grid
+        pois = self._merge_places(pois)
+        
+        # === FINAL FILTERS (before returning) ===
+        # 1. Filter by category membership (removes "Budynek" from food etc.)
+        pois = filter_by_membership(pois)
+        
+        # 2. Filter by radius (after merge some distances may have been updated)
+        if effective_radius:
+            pois = filter_by_radius(pois, effective_radius, default_radius=radius_m)
+        
+        logger.info(f"Hybrid: Final POI counts: {{{', '.join(f'{k}: {len(v)}' for k, v in pois.items())}}}")
         
         return pois, metrics
     
     def _find_missing_categories(self, coverage: Dict[str, int]) -> List[str]:
         """Znajduje kategorie z niewystarczającym coverage."""
         missing = []
-        for cat, count in coverage.items():
-            if cat in FALLBACK_TYPES and count < COVERAGE_THRESHOLD:
+        for cat in FALLBACK_TYPES:
+            count = coverage.get(cat, 0)
+            threshold = COVERAGE_THRESHOLDS.get(cat, DEFAULT_COVERAGE_THRESHOLD)
+            if count < threshold:
                 missing.append(cat)
         return missing
     
@@ -143,31 +185,51 @@ class HybridPOIProvider:
         pois: Dict[str, List[POI]],
         lat: float,
         lon: float,
-        radius_m: int,
+        radius_by_category: Dict[str, int],
+        default_radius: int,
         categories: List[str]
     ) -> None:
         """
         Uzupełnia brakujące kategorie przez Google Nearby Search.
-        Tylko dla kategorii z FALLBACK_TYPES.
+        Używa per-category radius!
         """
         if not self.google.api_key:
             logger.warning("Hybrid: Google API key not configured, skipping fallback")
             return
         
+        from ..cache import google_nearby_cache, TTLCache, normalize_coords
+
         for category in categories:
             types = FALLBACK_TYPES.get(category, [])
             if not types:
                 continue
-            
-            logger.debug(f"Hybrid: Fallback search for {category}: {types}")
-            
+
+            # Upewnij się że kategoria istnieje w słowniku
+            if category not in pois:
+                pois[category] = []
+
+            # USE CATEGORY-SPECIFIC RADIUS!
+            cat_radius = radius_by_category.get(category, default_radius)
+            logger.debug(f"Hybrid: Fallback search for {category}: {types} (radius={cat_radius}m)")
+
             for gtype in types:
                 try:
-                    results = self.google._search_nearby(lat, lon, radius_m, gtype)
-                    
+                    norm_lat, norm_lon = normalize_coords(lat, lon, precision=4)
+                    cache_key = TTLCache.make_key('google_nearby', norm_lat, norm_lon, cat_radius, gtype)
+                    cached = google_nearby_cache.get(cache_key)
+                    if cached is not None:
+                        results = cached
+                    else:
+                        results = self.google._search_nearby(lat, lon, cat_radius, gtype)
+                        google_nearby_cache.set(cache_key, results)
+
                     for place in results[:5]:  # Max 5 per type
                         poi = self.google._create_poi_from_place(place, category, lat, lon)
                         if poi and not self._is_duplicate(poi, pois[category]):
+                            # Skip if outside category radius
+                            if poi.distance_m > cat_radius:
+                                logger.debug(f"Fallback: skipping {poi.name} ({poi.distance_m:.0f}m > {cat_radius}m)")
+                                continue
                             poi.tags['source'] = 'google_fallback'
                             poi.source = 'google_fallback'
                             pois[category].append(poi)
@@ -401,3 +463,160 @@ class HybridPOIProvider:
             
             unique_items.sort(key=lambda p: p.distance_m)
             pois[category] = unique_items[:MAX_POIS_PER_CATEGORY]
+
+    def _merge_places(self, pois: Dict[str, List[POI]]) -> Dict[str, List[POI]]:
+        """Łączy POI z różnych źródeł w unikalne miejsca."""
+        merged: Dict[str, POI] = {}
+        merged_list: List[POI] = []
+
+        def key_for(poi: POI) -> str:
+            if poi.place_id:
+                return f"place:{poi.place_id}"
+            if poi.osm_uid:
+                return f"osm:{poi.osm_uid}"
+            name = (poi.name or '').strip().lower()
+            grid = (round(poi.lat, 4), round(poi.lon, 4))
+            if name in GENERIC_NAMES or poi.tags.get('_nameless'):
+                sub = (poi.subcategory or '').lower()
+                primary = poi.primary_category or ''
+                return f"generic:{primary}:{sub}:{grid[0]}:{grid[1]}"
+            return f"name:{name}:{grid[0]}:{grid[1]}"
+
+        for items in pois.values():
+            for poi in items:
+                key = key_for(poi)
+                if key not in merged:
+                    merged[key] = poi
+                    merged_list.append(poi)
+                    continue
+                base = merged[key]
+                self._merge_poi(base, poi)
+
+        return self._build_category_map(merged_list, pois.keys())
+
+    def _merge_poi(self, base: POI, other: POI) -> None:
+        """Scala dane dwóch POI w jedno miejsce."""
+        merged_sources = base.source != other.source
+
+        # Preferuj identyfikatory
+        if not base.place_id and other.place_id:
+            base.place_id = other.place_id
+            base.tags['place_id'] = other.place_id
+        if not base.osm_uid and other.osm_uid:
+            base.osm_uid = other.osm_uid
+            base.tags['osm_uid'] = other.osm_uid
+
+        # Preferuj nazwę nie-generyczną
+        if base.tags.get('_nameless') and not other.tags.get('_nameless') and other.name:
+            base.name = other.name
+            base.tags.pop('_nameless', None)
+
+        # Preferuj primary_category z OSM (po osm_uid)
+        if other.osm_uid and not base.osm_uid:
+            base.primary_category = other.primary_category
+        elif base.primary_category is None and other.primary_category:
+            base.primary_category = other.primary_category
+
+        # Ratings/reviews z Google (jeśli lepsze)
+        base_reviews = base.tags.get('user_ratings_total') or base.tags.get('reviews_count') or 0
+        other_reviews = other.tags.get('user_ratings_total') or other.tags.get('reviews_count') or 0
+        if other.tags.get('rating') and (not base.tags.get('rating') or other_reviews > base_reviews):
+            base.tags['rating'] = other.tags.get('rating')
+            base.tags['reviews_count'] = other.tags.get('reviews_count') or other.tags.get('user_ratings_total')
+            base.tags['user_ratings_total'] = other.tags.get('user_ratings_total') or other.tags.get('reviews_count')
+
+        # Typy / badges
+        base_types = set(base.tags.get('types', []) or [])
+        other_types = set(other.tags.get('types', []) or [])
+        if other_types:
+            base.tags['types'] = list(base_types | other_types)
+
+        base.badges = list(set(base.badges) | set(other.badges))
+
+        # Kategorie secondary + score
+        base.category_scores = {
+            **base.category_scores,
+            **{k: max(base.category_scores.get(k, 0), v) for k, v in other.category_scores.items()}
+        }
+        base.secondary_categories = list(set(base.secondary_categories) | set(other.secondary_categories))
+
+        # Dystans
+        if other.distance_m is not None:
+            base.distance_m = min(base.distance_m, other.distance_m) if base.distance_m is not None else other.distance_m
+
+        if merged_sources:
+            base.source = 'merged'
+            base.tags['source'] = 'merged'
+
+        # Normalizuj primary/secondary
+        self._normalize_categories(base)
+
+        # Category field = primary (spójność)
+        if base.primary_category:
+            base.category = base.primary_category
+
+    def _normalize_categories(self, poi: POI) -> None:
+        """Utrzymuje max 2 kategorie (primary + secondary)."""
+        primary = poi.primary_category
+        if not primary and poi.category_scores:
+            primary = max(poi.category_scores.items(), key=lambda kv: kv[1])[0]
+            poi.primary_category = primary
+
+        candidates = set(poi.secondary_categories)
+        for cat in poi.category_scores.keys():
+            if cat != primary:
+                candidates.add(cat)
+
+        if primary in candidates:
+            candidates.remove(primary)
+
+        secondary = []
+        if candidates:
+            if poi.category_scores:
+                ordered = sorted(
+                    candidates,
+                    key=lambda c: poi.category_scores.get(c, 0),
+                    reverse=True
+                )
+            else:
+                ordered = sorted(candidates)
+            secondary = ordered[:1]
+
+        poi.secondary_categories = secondary
+
+    def _build_category_map(
+        self,
+        places: List[POI],
+        base_keys: Iterable[str]
+    ) -> Dict[str, List[POI]]:
+        """Buduje mapę kategorii z listy unikalnych miejsc."""
+        category_keys = set(base_keys)
+        for poi in places:
+            if poi.primary_category:
+                category_keys.add(poi.primary_category)
+            for cat in poi.secondary_categories:
+                category_keys.add(cat)
+
+        categories: Dict[str, List[POI]] = {k: [] for k in category_keys}
+        added: Dict[str, set] = {k: set() for k in category_keys}
+
+        for poi in places:
+            cats = []
+            if poi.primary_category:
+                cats.append(poi.primary_category)
+            cats.extend(poi.secondary_categories or [])
+            for cat in cats:
+                if cat not in categories:
+                    categories[cat] = []
+                    added[cat] = set()
+                pid = id(poi)
+                if pid in added[cat]:
+                    continue
+                categories[cat].append(poi)
+                added[cat].add(pid)
+
+        for cat, items in categories.items():
+            items.sort(key=lambda p: p.distance_m)
+            categories[cat] = items[:MAX_POIS_PER_CATEGORY]
+
+        return categories
