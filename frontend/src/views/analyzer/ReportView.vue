@@ -199,7 +199,7 @@ const preferencesImpact = computed<PreferencesImpactData | null>(() => {
     const radius = radii[category] || catScore.radius_used || 1000;
     const nearestDist = catScore.nearest_distance_m;
     
-    // Generate detail text
+    // Generate detail text - consequence-focused, not technical
     let detail = '';
     if (catScore.poi_count > 0) {
       if (nearestDist !== null) {
@@ -208,7 +208,15 @@ const preferencesImpact = computed<PreferencesImpactData | null>(() => {
         detail = `${catScore.poi_count} w zasięgu`;
       }
     } else {
-      detail = 'Brak w zasięgu analizy';
+      // No POIs found - show category-specific consequence message
+      if (category === 'car_access') {
+        // Special handling: roads may exist but parking/access not confirmed
+        detail = `Brak parkingów/dojazdów w danych (sieć dróg niewyceniona)`;
+      } else if (category === 'roads') {
+        detail = `Analiza hałasu: brak danych o ruchu`;
+      } else {
+        detail = `Brak potwierdzonych miejsc w zasięgu ${radius}m`;
+      }
     }
     
     items.push({
@@ -239,11 +247,26 @@ const preferencesImpact = computed<PreferencesImpactData | null>(() => {
   };
 });
 
-// AI Narrative Summary - human-readable verdict explanation
+// AI Narrative Summary - prefers AI insights from backend, fallback to local generation
 const narrativeSummary = computed(() => {
   if (!report.value?.scoring || !report.value?.verdict) return null;
   
-  const score = report.value.scoring.total_score;
+  // Try AI-generated insights first
+  const aiInsights = (report.value as any).ai_insights;
+  if (aiInsights?.summary) {
+    return {
+      mainText: aiInsights.summary,
+      quickFacts: aiInsights.quick_facts || [],  // NEW: replaces attention_points
+      attentionPoints: aiInsights.attention_points || aiInsights.quick_facts || [],  // Legacy fallback
+      verificationChecklist: aiInsights.verification_checklist || [],
+      recommendationLine: aiInsights.recommendation_line || '',  // NEW
+      targetAudience: aiInsights.target_audience || '',  // NEW
+      disclaimer: aiInsights.disclaimer || '',  // NEW: data quality warnings
+      isAI: true,
+    };
+  }
+  
+  // Fallback: local generation
   const verdict = report.value.verdict;
   const profileName = report.value.generation_params?.profile?.name || 
                       report.value.profile?.name || 'wybrany profil';
@@ -260,10 +283,14 @@ const narrativeSummary = computed(() => {
   }
   
   return {
-    mainText: `Ta lokalizacja jest ${levelText} do profilu "${profileName}".`,
-    strengths: strengths.length > 0 ? `Mocne strony: ${strengths.join(', ')}.` : '',
-    weakness: weaknesses.length > 0 ? `Główny minus: ${weaknesses[0]}.` : '',
-    score,
+    mainText: `Ta lokalizacja jest ${levelText} do profilu "${profileName}". ${strengths.length > 0 ? 'Mocne strony: ' + strengths.join(', ') + '.' : ''} ${weaknesses.length > 0 ? 'Główny minus: ' + weaknesses[0] + '.' : ''}`.trim(),
+    quickFacts: [],
+    attentionPoints: [],
+    verificationChecklist: [],
+    recommendationLine: '',
+    targetAudience: '',
+    disclaimer: '',
+    isAI: false,
   };
 });
 
@@ -291,7 +318,7 @@ const mainLimitingFactor = computed(() => {
   // Check for noise penalty
   if (scoring.noise_penalty > 5) {
     return {
-      reason: `Wysoki poziom hałasu (kara: -${Math.round(scoring.noise_penalty)} pkt)`,
+      reason: `Podwyższony poziom hałasu w okolicy – może wpływać na komfort, szczególnie przy otwartych oknach`,
       type: 'noise'
     };
   }
@@ -299,7 +326,7 @@ const mainLimitingFactor = computed(() => {
   // Check for roads penalty
   if (scoring.roads_penalty && scoring.roads_penalty > 5) {
     return {
-      reason: `Bliskość ruchliwych dróg (kara: -${Math.round(scoring.roads_penalty)} pkt)`,
+      reason: `Bliskość ruchliwych dróg – może wpływać na komfort i jakość powietrza`,
       type: 'roads'
     };
   }
@@ -310,13 +337,36 @@ const mainLimitingFactor = computed(() => {
     const lowest = limitingFactors[0];
     if (lowest && lowest.score < 30) {
       return {
-        reason: `Brak wystarczającej liczby ${lowest.categoryName.toLowerCase()} w zasięgu (${lowest.radius}m)`,
+        reason: `Ograniczona dostępność ${lowest.categoryName.toLowerCase()} w okolicy – może wymagać częstszych dojazdów`,
         type: 'category'
       };
     }
   }
   
   return null;
+});
+
+// Confidence explanation - explains why confidence may be reduced
+const confidenceExplanation = computed(() => {
+  if (!report.value?.scoring || !report.value?.verdict) return null;
+  
+  const confidence = report.value.verdict.confidence;
+  const criticalCaps = report.value.scoring.critical_caps_applied || [];
+  
+  // If critical caps applied, explain the reduction
+  if (criticalCaps.length > 0) {
+    const cappedCategories = criticalCaps.map((cat: string) => getCategoryName(cat)).join(', ');
+    return `Ograniczona przez niespełnione wymagania: ${cappedCategories}`;
+  }
+  
+  // Standard explanations based on confidence level
+  if (confidence >= 80) {
+    return 'Wysoka zgodność z potrzebami profilu';
+  } else if (confidence >= 60) {
+    return 'Umiarkowana zgodność – niektóre kategorie wypadają słabiej';
+  } else {
+    return 'Niska zgodność – zalecana weryfikacja w terenie';
+  }
 });
 
 // Edit preferences - go back to landing with current params preserved
@@ -429,6 +479,7 @@ function getCategoryName(category: string): string {
     leisure: 'Sport',
     food: 'Gastronomia',
     finance: 'Finanse',
+    car_access: 'Dostęp samochodem',
   };
   return names[category] || category;
 }
@@ -445,6 +496,7 @@ function getCategoryIcon(category: string): string {
     leisure: 'pi-stopwatch',
     food: 'pi-apple',
     finance: 'pi-wallet',
+    car_access: 'pi-car',
   };
   return icons[category] || 'pi-map-marker';
 }
@@ -788,6 +840,63 @@ function copyPublicUrl() {
   }
 }
 
+// DEV: Re-analyze with same parameters (for testing)
+const isRefreshing = ref(false);
+const refreshStatus = ref('');
+
+async function refreshReport() {
+  if (!report.value?.listing || isRefreshing.value) return;
+  
+  const listing = report.value.listing;
+  const lat = listing.latitude;
+  const lon = listing.longitude;
+  
+  if (!lat || !lon) {
+    alert('Brak współrzędnych lokalizacji');
+    return;
+  }
+  
+  isRefreshing.value = true;
+  refreshStatus.value = 'Rozpoczynanie analizy...';
+  
+  try {
+    const newReport = await analyzerApi.analyzeLocationStream(
+      lat,
+      lon,
+      listing.price || 0,
+      listing.area_sqm || 0,
+      listing.location || '',
+      500, // default radius
+      listing.url?.startsWith('http') ? listing.url : undefined,  // Only real URLs, not location://
+      (event) => {
+        refreshStatus.value = event.message || event.status;
+      },
+      report.value.profile?.key || 'family',
+      'hybrid'
+    );
+    
+    // Update report in place
+    report.value = newReport;
+    refreshStatus.value = 'Gotowe!';
+    
+    // Reinitialize map
+    nextTick(initMap);
+    
+    // Clear status after 2s
+    setTimeout(() => {
+      refreshStatus.value = '';
+    }, 2000);
+    
+  } catch (err: any) {
+    refreshStatus.value = `Błąd: ${err.message}`;
+    setTimeout(() => {
+      refreshStatus.value = '';
+    }, 5000);
+  } finally {
+    isRefreshing.value = false;
+  }
+}
+
 // Load report
 onMounted(async () => {
   // Case 1: From fresh analysis (via sessionStorage)
@@ -915,9 +1024,18 @@ onMounted(async () => {
                 <i class="pi pi-pencil"></i>
                 <span class="hidden sm:inline">Zmień preferencje</span>
               </button>
-              <button 
-                @click="analyzeAnother"
-                class="px-4 py-2 rounded-xl bg-gradient-to-r from-blue-500 to-blue-600 text-white font-medium hover:shadow-lg transition-all flex items-center gap-2"
+              <button
+                @click="refreshReport"
+                :disabled="isRefreshing"
+                class="flex items-center gap-2 px-4 py-2.5 bg-amber-500 hover:bg-amber-600 disabled:bg-amber-300 text-white rounded-xl font-medium transition-all text-sm shadow-md"
+                title="DEV: Odśwież raport z tymi samymi danymi"
+              >
+                <i :class="isRefreshing ? 'pi pi-spin pi-spinner' : 'pi pi-refresh'"></i>
+                <span class="hidden sm:inline">{{ refreshStatus || 'DEV: Odśwież' }}</span>
+              </button>
+              <button
+                class="flex items-center gap-2 px-4 py-2.5 bg-white hover:bg-slate-50 text-slate-700 rounded-xl font-medium transition-all text-sm shadow-md border border-slate-200"
+                @click="$router.push({ name: 'landing' })"
               >
                 <i class="pi pi-plus"></i>
                 <span class="hidden sm:inline">Analizuj kolejne</span>
@@ -1019,12 +1137,13 @@ onMounted(async () => {
               <div class="flex items-center gap-3 mb-3">
                 <h2 class="text-2xl font-bold text-slate-900">{{ report!.verdict.label }}</h2>
                 <span 
-                  class="px-3 py-1 rounded-full text-xs font-semibold"
+                  class="px-3 py-1 rounded-full text-xs font-semibold cursor-help"
                   :class="{
                     'bg-emerald-100 text-emerald-700': report!.verdict.confidence >= 80,
                     'bg-amber-100 text-amber-700': report!.verdict.confidence >= 60 && report!.verdict.confidence < 80,
                     'bg-slate-100 text-slate-700': report!.verdict.confidence < 60
                   }"
+                  :title="confidenceExplanation || 'Pewność oznacza, w jakim stopniu lokalizacja spełnia kluczowe potrzeby wybranego profilu'"
                 >
                   {{ report!.verdict.confidence }}% pewności
                 </span>
@@ -1054,18 +1173,89 @@ onMounted(async () => {
             </div>
           </div>
           
-          <!-- AI Narrative Summary -->
+          <!-- Najważniejsze w 10 sekund (formerly AI Narrative Summary) -->
           <div v-if="narrativeSummary" class="mt-5 p-4 bg-gradient-to-r from-slate-50 to-gray-50 rounded-xl border border-slate-200">
             <div class="flex items-start gap-3">
               <div class="w-8 h-8 rounded-lg bg-gradient-to-br from-violet-400 to-purple-500 flex items-center justify-center flex-shrink-0">
-                <i class="pi pi-comments text-white text-sm"></i>
+                <i class="pi pi-bolt text-white text-sm"></i>
               </div>
-              <div class="text-slate-700 leading-relaxed">
-                <span class="font-medium">{{ narrativeSummary.mainText }}</span>
-                <span v-if="narrativeSummary.strengths" class="text-emerald-600"> {{ narrativeSummary.strengths }}</span>
-                <span v-if="narrativeSummary.weakness" class="text-amber-600"> {{ narrativeSummary.weakness }}</span>
+              <div class="flex-1">
+                <h4 class="font-bold text-slate-800 mb-2">Najważniejsze w 10 sekund</h4>
+                
+                <!-- Quick Facts (NEW - replaces attention_points) -->
+                <ul v-if="narrativeSummary.quickFacts?.length" class="space-y-1.5 mb-3">
+                  <li 
+                    v-for="(fact, idx) in narrativeSummary.quickFacts" 
+                    :key="idx"
+                    class="flex items-start gap-2 text-sm"
+                    :class="fact.startsWith('✅') ? 'text-emerald-700' : fact.startsWith('⚠') ? 'text-amber-700' : 'text-slate-600'"
+                  >
+                    <span>{{ fact }}</span>
+                  </li>
+                </ul>
+                
+                <!-- Main summary text -->
+                <p class="text-slate-600 leading-relaxed text-sm">{{ narrativeSummary.mainText }}</p>
+                
+                <!-- Recommendation Line (NEW - decision CTA) -->
+                <div v-if="narrativeSummary.recommendationLine" class="mt-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                  <p class="text-blue-800 font-semibold text-sm">{{ narrativeSummary.recommendationLine }}</p>
+                </div>
+                
+                <!-- Target Audience (NEW) -->
+                <p v-if="narrativeSummary.targetAudience" class="mt-2 text-xs text-slate-500 italic">
+                  {{ narrativeSummary.targetAudience }}
+                </p>
+                
+                <!-- Disclaimer (data quality warnings) -->
+                <div v-if="narrativeSummary.disclaimer" class="mt-3 p-3 bg-amber-50 border border-amber-200 rounded-lg">
+                  <p class="text-amber-800 text-xs flex items-start gap-2">
+                    <span class="mt-0.5">⚠</span>
+                    <span>{{ narrativeSummary.disclaimer }}</span>
+                  </p>
+                </div>
               </div>
             </div>
+          </div>
+          
+          <!-- Verification Checklist (NEW - practical things to check in person) -->
+          <div v-if="narrativeSummary?.verificationChecklist?.length" class="mt-4 p-4 bg-emerald-50 border border-emerald-200 rounded-xl">
+            <h4 class="font-semibold text-emerald-800 mb-2 flex items-center gap-2">
+              <i class="pi pi-check-circle"></i>
+              Co sprawdzić osobiście
+            </h4>
+            <ul class="space-y-2">
+              <li 
+                v-for="(item, idx) in narrativeSummary.verificationChecklist" 
+                :key="idx"
+                class="flex items-start gap-2 text-sm text-emerald-700"
+              >
+                <span class="text-emerald-500 mt-0.5">☑</span>
+                <span>{{ item }}</span>
+              </li>
+            </ul>
+          </div>
+          
+          <!-- How to use this report (MOVED UP - per user feedback) -->
+          <div class="mt-4 p-4 bg-slate-50 border border-slate-200 rounded-xl">
+            <h4 class="font-semibold text-slate-700 mb-2 flex items-center gap-2">
+              <i class="pi pi-info-circle"></i>
+              Co to oznacza w praktyce
+            </h4>
+            <ul class="space-y-1.5 text-sm text-slate-600">
+              <li class="flex items-start gap-2">
+                <span class="text-slate-400">•</span>
+                <span>Porównaj z innymi lokalizacjami, które rozważasz</span>
+              </li>
+              <li class="flex items-start gap-2">
+                <span class="text-slate-400">•</span>
+                <span>Zwróć uwagę na wskazane kompromisy podczas oględzin</span>
+              </li>
+              <li class="flex items-start gap-2">
+                <span class="text-slate-400">•</span>
+                <span>Sprawdź porę dnia i hałas, jeśli to dla Ciebie istotne</span>
+              </li>
+            </ul>
           </div>
           
           <!-- Why not higher? Section -->
@@ -1168,7 +1358,7 @@ onMounted(async () => {
                 <span class="w-5 h-5 rounded-full bg-emerald-500 flex items-center justify-center">
                   <i class="pi pi-arrow-up text-white text-xs"></i>
                 </span>
-                Najwięcej wniosły
+                Najsilniej wpłynęły na ocenę
               </h4>
               <div class="space-y-3">
                 <div 
@@ -1180,10 +1370,10 @@ onMounted(async () => {
                   <div class="flex-1 min-w-0">
                     <div class="flex items-center justify-between gap-2">
                       <span class="font-medium text-slate-800">{{ item.categoryName }}</span>
-                      <span class="text-xs font-mono px-2 py-0.5 bg-emerald-100 text-emerald-700 rounded">+{{ item.score }}pkt</span>
+                      <span class="text-xs font-mono px-2 py-0.5 bg-emerald-100 text-emerald-700 rounded">{{ item.radius }}m</span>
                     </div>
                     <div class="text-xs text-slate-500 mt-0.5">
-                      {{ item.radius }}m zasięg • {{ item.detail }}
+                      {{ item.detail }}
                     </div>
                   </div>
                 </div>
@@ -1196,7 +1386,7 @@ onMounted(async () => {
                 <span class="w-5 h-5 rounded-full bg-amber-500 flex items-center justify-center">
                   <i class="pi pi-arrow-down text-white text-xs"></i>
                 </span>
-                Ograniczające
+                Największe kompromisy
               </h4>
               <div class="space-y-3">
                 <div 
@@ -1208,24 +1398,19 @@ onMounted(async () => {
                   <div class="flex-1 min-w-0">
                     <div class="flex items-center justify-between gap-2">
                       <span class="font-medium text-slate-800">{{ item.categoryName }}</span>
-                      <span class="text-xs font-mono px-2 py-0.5 bg-amber-100 text-amber-700 rounded">{{ item.score }}pkt</span>
+                      <span class="text-xs font-mono px-2 py-0.5 bg-amber-100 text-amber-700 rounded">{{ item.radius }}m</span>
                     </div>
                     <div class="text-xs text-slate-500 mt-0.5">
-                      {{ item.radius }}m zasięg • {{ item.detail }}
+                      {{ item.detail }}
                     </div>
                   </div>
                 </div>
               </div>
             </div>
           </div>
-          
-          <!-- Tip to edit -->
-          <div class="mt-4 p-3 bg-slate-50 rounded-lg flex items-center gap-3 text-sm text-slate-600">
-            <i class="pi pi-info-circle text-blue-500"></i>
-            <span>Chcesz zmienić ustawienia? Kliknij <button @click="editPreferences" class="font-medium text-blue-600 hover:underline">Zmień preferencje</button> w górnym panelu.</span>
-          </div>
         </div>
         
+        <!-- NOTE: 'Jak użyć tego raportu' section moved to top of report near verdict -->
         <!-- Dane z ogłoszenia -->
         <div class="relative bg-white rounded-2xl p-6 shadow-lg border border-slate-100 overflow-hidden">
           <div class="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-blue-400 via-indigo-500 to-violet-500"></div>

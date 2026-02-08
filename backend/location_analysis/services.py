@@ -14,6 +14,8 @@ from .personas import get_persona_by_string, PersonaType
 from .scoring.profile_verdict import ProfileVerdictGenerator
 from .scoring.profiles import get_profile, get_profiles_summary
 from .scoring.profile_engine import create_scoring_engine
+from .ai_insights import generate_decision_insights, generate_insights_from_factsheet
+from .analysis_factsheet import build_factsheet_from_scoring
 
 logger = logging.getLogger(__name__)
 
@@ -209,16 +211,18 @@ class AnalysisService:
             pois = None
             profile_scoring_result = None
             verdict = None
+            ai_insights = None
             
             try:
                 provider_label = 'Google Places' if poi_provider == 'google' else ('Hybrid' if poi_provider == 'hybrid' else 'Overpass')
                 yield json.dumps({'status': 'map', 'message': f'Analiza mapy ({provider_label}, promień {fetch_radius}m)...'}) + '\n'
-                pois, metrics = self._get_pois(
+                pois, metrics, poi_cache_used = self._get_pois(
                     lat, lon, fetch_radius, 
                     use_cache=True, 
                     provider=poi_provider,
                     radius_by_category=effective_radius_m  # Pass per-category radius!
                 )
+                logger.info(f"POI fetch: cache_used={poi_cache_used}, provider={poi_provider}")
 
                 # Debug: zrzut wykrytych POI (top 10 per kategoria)
                 if logger.isEnabledFor(logging.DEBUG):
@@ -266,6 +270,31 @@ class AnalysisService:
                     f"verdict={verdict.level.value}"
                 )
                 
+                # 4. NOWE: Generuj AI insights (Single Source of Truth architecture)
+                yield json.dumps({'status': 'ai', 'message': 'Generowanie opisów AI...'}) + '\n'
+                try:
+                    # Build canonical factsheet - the ONLY input AI receives
+                    quiet = neighborhood_score.quiet_score or 50.0
+                    factsheet = build_factsheet_from_scoring(
+                        profile=profile,
+                        scoring_result=profile_scoring_result,
+                        verdict=verdict,
+                        quiet_score=quiet,
+                        pois_by_category=pois,
+                        listing=listing,
+                    )
+                    
+                    # Generate AI insights from factsheet (not raw data)
+                    ai_insights = generate_insights_from_factsheet(factsheet)
+                    
+                    if ai_insights:
+                        logger.info(f"AI insights generated: {ai_insights.summary[:50]}...")
+                except Exception as ai_error:
+                    logger.warning(f"AI insights generation failed: {ai_error}")
+                    import traceback
+                    traceback.print_exc()
+                    ai_insights = None
+                
             except Exception as e:
                 logger.warning(f"Błąd analizy okolicy: {e}")
                 import traceback
@@ -293,6 +322,7 @@ class AnalysisService:
                 'radii': effective_radius_m,
                 'fetch_radius': fetch_radius,
                 'poi_provider': poi_provider,
+                'poi_cache_used': poi_cache_used,  # DEV: czy dane POI były z cache
                 'coords': {'lat': lat, 'lon': lon},
             }
             
@@ -308,6 +338,7 @@ class AnalysisService:
                 profile_key=effective_profile_key,
                 profile_scoring_result=profile_scoring_result,
                 verdict=verdict,
+                ai_insights=ai_insights,
             )
             
             result = report.to_dict()
@@ -324,6 +355,14 @@ class AnalysisService:
                 result['scoring'] = profile_scoring_result.to_dict()
             if verdict:
                 result['verdict'] = verdict.to_dict()
+            
+            # Dodaj AI insights do wyniku
+            if ai_insights:
+                result['ai_insights'] = {
+                    'summary': ai_insights.summary,
+                    'attention_points': ai_insights.attention_points,
+                    'verification_checklist': ai_insights.verification_checklist,
+                }
             
             yield json.dumps({'status': 'complete', 'result': result}) + '\n'
             
@@ -389,7 +428,7 @@ class AnalysisService:
             cached = overpass_cache.get(cache_key)
             if cached:
                 logger.info(f"POI z cache ({provider}): ({norm_lat}, {norm_lon}) r={radius}")
-                return cached
+                return cached[0], cached[1], True  # pois, metrics, cache_used=True
         
         # Wybór klienta
         if provider == 'hybrid':
@@ -413,7 +452,7 @@ class AnalysisService:
         if use_cache:
             overpass_cache.set(cache_key, result, ttl=604800)  # 7 dni
         
-        return result
+        return pois, metrics, False  # cache_used=False
     
     def _save_to_db(
         self,
@@ -470,6 +509,7 @@ class AnalysisService:
         profile_key: str = None,
         profile_scoring_result = None,
         verdict = None,
+        ai_insights = None,
     ) -> Optional[LocationAnalysis]:
         """Zapisuje wynik analizy lokalizacji do bazy danych."""
         try:
@@ -534,6 +574,15 @@ class AnalysisService:
                     'scoring_debug': scoring_debug,
                     'verdict_data': verdict_data,
                     'persona_adjusted_score': persona_adjusted_score,
+                    'ai_insights_data': {
+                        'summary': ai_insights.summary if ai_insights else '',
+                        'quick_facts': ai_insights.quick_facts if ai_insights else [],
+                        'attention_points': ai_insights.attention_points if ai_insights else [],  # Legacy alias
+                        'verification_checklist': ai_insights.verification_checklist if ai_insights else [],
+                        'recommendation_line': ai_insights.recommendation_line if ai_insights else '',
+                        'target_audience': ai_insights.target_audience if ai_insights else '',
+                        'disclaimer': ai_insights.disclaimer if ai_insights else '',  # Data quality warnings
+                    } if ai_insights else {},
                 }
             )
             

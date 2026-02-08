@@ -93,6 +93,11 @@ class LocationAnalysis(models.Model):
         blank=True,
         help_text="Werdykt decyzyjny (polecane/warunkowo/niepolecane)"
     )
+    ai_insights_data = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="AI-generated decision insights (summary, attention_points, verification_checklist)"
+    )
     persona_adjusted_score = models.FloatField(
         null=True, 
         blank=True,

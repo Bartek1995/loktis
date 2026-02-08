@@ -232,7 +232,19 @@ class ReportDetailView(APIView):
         
         # Zwróć pełny raport z report_data lub zbuduj z pól
         if analysis.report_data:
-            return Response(analysis.report_data)
+            report = analysis.report_data.copy()
+            
+            # Dodaj zapisane AI insights (persisted from original analysis)
+            if analysis.ai_insights_data:
+                report['ai_insights'] = analysis.ai_insights_data
+            
+            # Dodaj scoring i verdict jeśli dostępne
+            if analysis.scoring_data and 'scoring' not in report:
+                report['scoring'] = analysis.scoring_data
+            if analysis.verdict_data and 'verdict' not in report:
+                report['verdict'] = analysis.verdict_data
+            
+            return Response(report)
         
         # Fallback - zbuduj z pól modelu
         return Response({
@@ -269,4 +281,5 @@ class ReportDetailView(APIView):
             'checklist': analysis.checklist or [],
             'limitations': [],
             'public_id': analysis.public_id,
+            'ai_insights': analysis.ai_insights_data or {},
         })
