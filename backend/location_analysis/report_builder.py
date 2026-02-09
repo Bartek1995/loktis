@@ -1,11 +1,11 @@
 """
-Builder raportów z analizy ogłoszeń.
+Builder raportów z analizy lokalizacji.
 """
 from typing import Optional, List, Dict, Any
 from dataclasses import dataclass, field
 from decimal import Decimal
 
-from .providers.base import ListingData
+from .providers.base import ListingData as PropertyData  # Aliased for semantic clarity
 from .geo.poi_analyzer import NeighborhoodScore
 
 
@@ -18,12 +18,11 @@ class AnalysisReport:
     errors: List[str] = field(default_factory=list)
     warnings: List[str] = field(default_factory=list)
     
-    # TL;DR
-    pros: List[str] = field(default_factory=list)
-    cons: List[str] = field(default_factory=list)
+    # TL;DR removed - now handled by AI insights and not displayed in frontend
     
-    # Dane z ogłoszenia
-    listing_data: Dict[str, Any] = field(default_factory=dict)
+    # Dane nieruchomości (opcjonalne, podane przez użytkownika)
+    property_data: Dict[str, Any] = field(default_factory=dict)
+    property_completeness: Dict[str, bool] = field(default_factory=dict)
     
     # Okolica
     has_location: bool = False
@@ -48,11 +47,11 @@ class AnalysisReport:
             'success': self.success,
             'errors': self.errors,
             'warnings': self.warnings,
-            'tldr': {
-                'pros': self.pros,
-                'cons': self.cons,
-            },
-            'listing': self.listing_data,
+            'tldr': {'pros': [], 'cons': []},  # Legacy - kept for API compatibility
+            'property': self.property_data,
+            'property_completeness': self.property_completeness,
+            # Legacy alias for backwards compatibility
+            'listing': self.property_data,
             'neighborhood': {
                 'has_location': self.has_location,
                 'score': self.neighborhood_score,
@@ -69,19 +68,9 @@ class AnalysisReport:
 
 
 class ReportBuilder:
-    """Buduje raport z analizy ogłoszenia."""
+    """Buduje raport z analizy lokalizacji."""
     
-    # Średnie ceny za m² w Polsce (uproszczone, 2025)
-    AVG_PRICE_PER_SQM = {
-        'warszawa': 15000,
-        'kraków': 12000,
-        'wrocław': 11000,
-        'poznań': 10500,
-        'gdańsk': 11000,
-        'łódź': 7500,
-        'katowice': 7000,
-        'default': 8000,
-    }
+    # Price comparisons removed - no verifiable benchmark data available
     
     # Standardowe pytania do checklisty
     BASE_CHECKLIST = [
@@ -99,7 +88,7 @@ class ReportBuilder:
     
     def build(
         self,
-        listing: ListingData,
+        property_input: PropertyData,
         neighborhood_score: Optional[NeighborhoodScore] = None,
         poi_stats: Optional[Dict[str, Any]] = None,
         all_pois: Optional[Dict[str, list]] = None,
@@ -108,7 +97,7 @@ class ReportBuilder:
         Buduje pełny raport.
         
         Args:
-            listing: Dane z ogłoszenia
+            property_input: Dane nieruchomości (opcjonalne, od użytkownika)
             neighborhood_score: Wynik analizy okolicy (opcjonalny)
             poi_stats: Statystyki POI (opcjonalny)
         
@@ -118,13 +107,39 @@ class ReportBuilder:
         report = AnalysisReport()
         
         # Przekaż błędy z parsowania
-        report.errors = listing.errors.copy()
+        report.errors = property_input.errors.copy()
         
-        # Dane z ogłoszenia
-        report.listing_data = listing.to_dict()
+        # Dane nieruchomości + completeness
+        source = getattr(property_input, 'source', 'user')
+        prop_dict = property_input.to_dict()
+        prop_dict['source'] = source
+        report.property_data = prop_dict
+        
+        # Build property_completeness with per-field source
+        has_price = property_input.price is not None
+        has_area = property_input.area_sqm is not None
+        has_ppm = property_input.price_per_sqm is not None
+        
+        report.property_completeness = {
+            'has_any': has_price or has_area,
+            'source': source,
+            'fields': {
+                'price': {'value': property_input.price, 'source': source} if has_price else None,
+                'area_sqm': {'value': property_input.area_sqm, 'source': source} if has_area else None,
+                'price_per_sqm': {'value': property_input.price_per_sqm, 'source': 'computed'} if has_ppm else None,
+                'rooms': {'value': property_input.rooms, 'source': source} if property_input.rooms else None,
+                'floor': {'value': property_input.floor, 'source': source} if property_input.floor else None,
+            },
+            # Legacy flat flags for backwards compatibility
+            'has_price': has_price,
+            'has_area': has_area,
+            'has_price_per_sqm': has_ppm,
+            'has_rooms': property_input.rooms is not None,
+            'has_floor': bool(property_input.floor),
+        }
         
         # Analiza lokalizacji
-        if listing.has_precise_location and listing.latitude and listing.longitude:
+        if property_input.has_precise_location and property_input.latitude and property_input.longitude:
             report.has_location = True
             
             if neighborhood_score:
@@ -144,162 +159,42 @@ class ReportBuilder:
                 "Brak dokładnej lokalizacji - analiza okolicy jest ograniczona."
             )
         
-        # Generuj TL;DR
-        pros, cons = self._generate_tldr(listing, neighborhood_score)
-        report.pros = pros
-        report.cons = cons
         
-        # Dodaj ostrzeżenia
-        report.warnings = self._generate_warnings(listing)
+        # Dodaj ostrzeżenia (tylko gdy source != 'user' - dane z providera)
+        report.warnings = self._generate_warnings(property_input)
         
         # Dodaj ograniczenia
-        if listing.errors:
+        if property_input.errors:
             report.limitations.append(
                 "Niektóre dane mogły nie zostać poprawnie pobrane."
             )
         
         return report
     
-    def _generate_tldr(
-        self,
-        listing: ListingData,
-        neighborhood_score: Optional[NeighborhoodScore]
-    ) -> tuple[List[str], List[str]]:
-        """Generuje 3 plusy i 3 potencjalne ryzyka."""
-        pros = []
-        cons = []
-        
-        # === PLUSY ===
-        
-        # Cena za m²
-        if listing.price_per_sqm and listing.location:
-            city = self._detect_city(listing.location)
-            avg = self.AVG_PRICE_PER_SQM.get(city, self.AVG_PRICE_PER_SQM['default'])
-            
-            if float(listing.price_per_sqm) < avg * 0.85:
-                pros.append(f"Cena za m² poniżej średniej dla {city.title() if city != 'default' else 'regionu'}")
-            elif float(listing.price_per_sqm) > avg * 1.2:
-                cons.append(f"Cena za m² powyżej średniej dla {city.title() if city != 'default' else 'regionu'}")
-        
-        # Metraż
-        if listing.area_sqm:
-            if listing.area_sqm >= 60:
-                pros.append(f"Przestronne mieszkanie ({listing.area_sqm} m²)")
-            elif listing.area_sqm < 35:
-                cons.append(f"Mały metraż ({listing.area_sqm} m²)")
-        
-        # Okolica
-        if neighborhood_score:
-            # Peace & Quiet
-            if neighborhood_score.quiet_score is not None:
-                if neighborhood_score.quiet_score >= 70:
-                    pros.append("Cicha, zielona okolica")
-                elif neighborhood_score.quiet_score <= 35:
-                     # Only add as negative if we don't have too many cons yet
-                     cons.append("Głośna okolica / duży ruch")
-
-            if neighborhood_score.total_score >= 70:
-                pros.append("Bardzo dobra infrastruktura w okolicy")
-            elif neighborhood_score.total_score >= 50:
-                pros.append("Dobra infrastruktura w okolicy")
-            elif neighborhood_score.total_score < 30:
-                cons.append("Słaba infrastruktura w okolicy")
-            
-            # Szczegóły kategorii
-            for cat, score in neighborhood_score.category_scores.items():
-                if score >= 80 and len(pros) < 3:
-                    cat_names = {
-                        'transport': 'Doskonały dostęp do transportu publicznego',
-                        'shops': 'Wiele sklepów w pobliżu',
-                        'leisure': 'Blisko terenów rekreacyjnych',
-                        'education': 'Szkoły/przedszkola w zasięgu spaceru',
-                    }
-                    if cat in cat_names:
-                        pros.append(cat_names[cat])
-                elif score <= 20 and len(cons) < 3:
-                    cat_names = { # Only mention if relevant
-                        'transport': 'Słaby dostęp do transportu publicznego',
-                    }
-                    if cat in cat_names:
-                        cons.append(cat_names[cat])
-        
-        # Piętro
-        if listing.floor:
-            floor_lower = listing.floor.lower()
-            if floor_lower == 'parter' or floor_lower == '0':
-                cons.append("Parter - potencjalnie mniej prywatności i bezpieczeństwa")
-            elif floor_lower in ['1', '2', '3']:
-                pros.append(f"Wygodne piętro ({listing.floor})")
-        
-        # Liczba pokoi vs metraż
-        if listing.rooms and listing.area_sqm:
-            avg_room_size = listing.area_sqm / listing.rooms
-            if avg_room_size >= 18:
-                if len(pros) < 3:
-                    pros.append("Duże pokoje")
-            elif avg_room_size < 12:
-                if len(cons) < 3:
-                    cons.append("Małe pokoje")
-        
-        # Uzupełnij do 3 jeśli brak
-        while len(pros) < 3:
-            defaults = [
-                "Sprawdź dokumentację prawną",
-                "Zweryfikuj stan techniczny przy oględzinach",
-                "Porównaj z podobnymi ofertami w okolicy",
-            ]
-            for d in defaults:
-                if d not in pros and len(pros) < 3:
-                    pros.append(d)
-                    break
-            else:
-                break
-        
-        while len(cons) < 3:
-            defaults = [
-                "Brak pełnych danych o lokalizacji",
-                "Zweryfikuj aktualność ogłoszenia",
-                "Sprawdź koszty eksploatacji",
-            ]
-            for d in defaults:
-                if d not in cons and len(cons) < 3:
-                    cons.append(d)
-                    break
-            else:
-                break
-        
-        return pros[:3], cons[:3]
     
-
-    
-    def _generate_warnings(self, listing: ListingData) -> List[str]:
-        """Generuje ostrzeżenia."""
+    def _generate_warnings(self, property_input: PropertyData) -> List[str]:
+        """Generuje ostrzeżenia - tylko dla danych z providerów, nie user input."""
         warnings = []
         
-        if not listing.price:
+        # If user-provided data, don't generate "missing" warnings
+        source = getattr(property_input, 'source', 'user')
+        if source == 'user' or source == 'none':
+            return warnings
+        
+        # Only generate warnings for provider-sourced data
+        if not property_input.price:
             warnings.append("Nie udało się pobrać ceny z ogłoszenia.")
         
-        if not listing.area_sqm:
+        if not property_input.area_sqm:
             warnings.append("Brak informacji o metrażu.")
         
-        if not listing.description:
+        if not property_input.description:
             warnings.append("Brak opisu - może to być niekompletne ogłoszenie.")
         
-        if listing.description and len(listing.description) < 100:
+        if property_input.description and len(property_input.description) < 100:
             warnings.append("Bardzo krótki opis ogłoszenia.")
         
         return warnings
-    
-    def _detect_city(self, location: str) -> str:
-        """Próbuje wykryć miasto z lokalizacji."""
-        location_lower = location.lower()
-        
-        cities = ['warszawa', 'kraków', 'wrocław', 'poznań', 'gdańsk', 'łódź', 'katowice']
-        for city in cities:
-            if city in location_lower:
-                return city
-        
-        return 'default'
     
     def _generate_markers(self, pois_by_category: Dict[str, list]) -> List[Dict[str, Any]]:
         """Generuje markery POI dla mapy."""

@@ -24,77 +24,94 @@ logger = logging.getLogger(__name__)
 class DecisionInsight:
     """AI-generated text output based on factsheet."""
     summary: str
-    quick_facts: list[str]  # Uses ✅/⚠ emoji correctly
-    verification_checklist: list[str]  # Actionable 5-15 min checks
-    recommendation_line: str = ""  # "Rekomendacja: Obejrzyj, jeśli..."
-    target_audience: str = ""  # "Dla kogo pasuje / nie pasuje"
-    disclaimer: str = ""  # Shown when data_quality_flags present
+    # tldr_pros/tldr_cons removed - no longer displayed in frontend
+    check_on_site: list[str] = field(default_factory=list)  # Exactly 3 actionable checks
+    why_not_higher: str = ""  # Why score isn't higher (from primary_blocker)
     
-    # Legacy alias for backwards compatibility
+    # Legacy fields for backwards compatibility
+    recommendation_line: str = ""
+    target_audience: str = ""
+    disclaimer: str = ""
+    
+    @property
+    def quick_facts(self) -> list[str]:
+        """Legacy: Now returns empty list as pros/cons are removed."""
+        return []
+    
+    @property
+    def verification_checklist(self) -> list[str]:
+        """Legacy alias."""
+        return self.check_on_site
+    
+    # Legacy alias
     @property
     def attention_points(self) -> list[str]:
         return self.quick_facts
+    
+    def to_dict(self) -> dict:
+        """Serialize to dict for API response. Includes computed properties."""
+        return {
+            'summary': self.summary,
+            'check_on_site': self.check_on_site,
+            'why_not_higher': self.why_not_higher,
+            # Legacy fields for backwards compatibility with frontend
+            'quick_facts': self.quick_facts,
+            'verification_checklist': self.verification_checklist,
+            'recommendation_line': self.recommendation_line,
+            'target_audience': self.target_audience,
+            'disclaimer': self.disclaimer,
+        }
 
 
 # System prompt - STRICT CONTRACT
 # AI receives ONLY structured facts, generates ONLY structured text
 SYSTEM_PROMPT = """Jesteś ekspertem od lokalizacji nieruchomości. Generujesz opisy dla PŁATNEGO raportu.
 
-ŚCISŁE ZASADY:
-1. Używasz TYLKO faktów z przekazanego JSON — żadnych wynalezionych danych
-2. Nie zgadujesz nazw miejsc, ulic, sklepów — używasz tylko kategorii i odległości
-3. Jeśli jest primary_blocker — MUSISZ go wymienić w "why this score"
-4. Checklista = KONKRETNE czynności do zrobienia w 5-15 minut na miejscu
+TWOJE JEDYNE ZADANIE: Opisz fakty z JSON. NIE WYMYŚLAJ niczego.
 
-ZAKAZANE:
-- Wymyślanie faktów spoza danych
-- Sugerowanie zmiany profilu/ustawień
-- Słowa: "punkty", "algorytm", "optymalizacja"
-- Ogólniki typu "sprawdź okolicę"
-- Kategoryczne stwierdzenia przy brakach: NIE "nie ma dróg" → TAK "brak danych o dojeździe"
-
-JĘZYK PRZY BRAKACH DANYCH:
-- Zamiast "nie ma X" → "brak potwierdzenia X w danych"
-- Zamiast "brak parkingów" → "nie znaleziono parkingów w promieniu analizy"
-- Jeśli data_quality_flags niepuste → używaj słów: "ograniczone dane", "niepełna weryfikacja"
-
-FORMAT WYJŚCIOWY (JSON):
+FORMAT WYJŚCIOWY (ścisły JSON):
 {
-  "quick_facts": [
-    "✅ [plus z positive_drivers, np. 'Sklepy w 55m']",
-    "✅ [plus z positive_drivers]",
-    "⚠ [ryzyko z negative_drivers lub noise]"
-  ],
-  "summary": "2-3 zdania. Jeśli jest primary_blocker, wyjaśnij DLACZEGO wpływa na wynik.",
-  "verification_checklist": [
-    "Sprawdź X w godzinach Y",
-    "Zweryfikuj Z na miejscu",
-    "Użyj narzędzia W do sprawdzenia..."
-  ],
-  "recommendation_line": "Rekomendacja: [Obejrzyj / Obejrzyj jeśli... / Rozważ ostrożnie]",
-  "target_audience": "Pasuje dla... / Ryzykowne dla...",
-  "disclaimer": "[TYLKO jeśli są data_quality_flags] Dane niepełne: ..."
+  "summary": "1-2 zdania podsumowania",
+  "check_on_site": ["...", "...", "..."],
+  "why_not_higher": "Dlaczego ocena nie jest wyższa (z primary_blocker)"
 }
 
-ZASADY quick_facts:
-- ✅ = plus z positive_drivers (max 2)
-- ⚠ = ryzyko z negative_drivers lub noise (min 1)
-- Zawsze używaj odległości jeśli jest w danych (np. "55m" nie "blisko")
+ŚCISŁE WYMOGI:
+- check_on_site: DOKŁADNIE 3 elementy, konkretne czynności 5-15 min
+- Każdy element MUSI mieć podstawę w przekazanych danych
 
-ZASADY verification_checklist:
-- "Stań przy oknie 2 min w szczycie 16-18"
-- "Włącz Google Maps → natężenie ruchu o 8:00"
-- "Sprawdź stronę świata okien"
-- NIE: "upewnij się", "rozważ", "weź pod uwagę"
+SKĄD BRAĆ TREŚĆ:
+- why_not_higher → z verdict_reason lub primary_blocker_detail
+- check_on_site → z kategorii które są słabe lub mają penalties
 
-ZASADY recommendation_line:
-- verdict=recommended → "Rekomendacja: Obejrzyj."
-- verdict=conditional → "Rekomendacja: Obejrzyj, jeśli [warunek z primary_blocker]."
-- verdict=not_recommended → "Rekomendacja: Rozważ ostrożnie. [przyczyna z primary_blocker]."
+ZAKAZANE FRAZY (odrzucenie jeśli użyte):
+- "porównaj cenę z podobnymi ofertami"
+- "sprawdź koszty eksploatacji"
+- "zweryfikuj dokumentację prawną"
+- "sprawdź dokumentację"
+- "obejrzyj z kimś"
+- "porozmawiaj z sąsiadami"
+- "weź pod uwagę"
+- "upewnij się"
 
-ZASADY disclaimer:
-- TYLKO jeśli data_quality_flags niepuste
-- Wymień konkretne braki, np. "Dane cenowe wyglądają na błędne"
+ZASADY HAŁASU:
+- Jeśli noise.source ≠ "measurement" → NIE WOLNO "poziom hałasu jest...", "okolica jest spokojna"
+- ZAMIAST → "Ryzyko podwyższonego hałasu (do weryfikacji)", "Spokój wymaga weryfikacji"
+
+ZASADY DRÓG:
+- NIE WOLNO "ruchliwe drogi" — brak danych o natężeniu
+- ZAMIAST → "bliskość dróg i infrastruktury transportowej"
+
+ZASADY check_on_site:
+- KONKRETNE: "Stań przy oknie 2 min w szczycie 16-18"
+- KONKRETNE: "Włącz Google Maps → natężenie ruchu o 8:00"
+- KONKRETNE: "Sprawdź nasłonecznienie o 15:00"
+- NIE: "sprawdź okolicę", "oceń atmosferę"
+
+SPÓJNOŚĆ:
+- Jeśli data_reason puste → NIE pisz "dane niepełne"
+- Jeśli penalties.roads_penalty >= 6 → NIE pisz "spokojna/cicha okolica"
+- Jeśli primary_blocker == "roads" → why_not_higher MUSI wspomnieć drogi
 """
 
 
@@ -119,18 +136,37 @@ class AIInsightGenerator:
             system_instruction=SYSTEM_PROMPT
         )
     
+    # Blacklist of generic phrases that indicate AI is confabulating
+    BLACKLIST_PHRASES = [
+        "porównaj cenę",
+        "sprawdź koszty eksploatacji",
+        "zweryfikuj dokumentację",
+        "sprawdź dokumentację",
+        "obejrzyj z kimś",
+        "porozmawiaj z sąsiadami",
+        "weź pod uwagę",
+        "upewnij się",
+        "sprawdź okolicę",
+        "oceń atmosferę",
+        "ruchliwe drogi",
+        "ruchliwych dróg",
+    ]
+    
     def generate_from_factsheet(
         self,
         factsheet: AnalysisFactSheet,
     ) -> Optional[DecisionInsight]:
         """
-        Generate AI insights from AnalysisFactSheet.
+        Generate AI insights from AnalysisFactSheet with validation.
         
-        This is the ONLY method that should be used.
-        AI sees ONLY the factsheet, never raw data.
+        Returns validated AI output or deterministic fallback.
         """
+        # Always have fallback ready
+        fallback = self._generate_fallback_tldr(factsheet)
+        
         if not self.model:
-            return None
+            logger.info("No AI model, using fallback TL;DR")
+            return fallback
         
         try:
             # Convert factsheet to AI-safe JSON
@@ -147,18 +183,148 @@ DANE (to jest JEDYNE źródło prawdy - nie wymyślaj innych faktów):
             # Parse JSON response
             data = json.loads(response.text)
             
+            # POST-FILTER: Sanitize declarative noise/quiet claims
+            if factsheet.noise_source != "measurement":
+                data = self._sanitize_noise_claims(data)
+            
+            # VALIDATE AI output
+            validation_errors = self._validate_ai_output(data, factsheet)
+            if validation_errors:
+                logger.warning(f"AI output validation failed: {validation_errors}. Using fallback.")
+                return fallback
+            
+            # Extract from new schema (tldr removed)
+            
             return DecisionInsight(
-                summary=data.get('summary', ''),
-                quick_facts=data.get('quick_facts', [])[:3],
-                verification_checklist=data.get('verification_checklist', [])[:3],
-                recommendation_line=data.get('recommendation_line', ''),
-                target_audience=data.get('target_audience', ''),
-                disclaimer=data.get('disclaimer', ''),
+                summary=data.get('summary', fallback.summary),
+                check_on_site=data.get('check_on_site', fallback.check_on_site)[:3],
+                why_not_higher=data.get('why_not_higher', fallback.why_not_higher),
             )
             
         except Exception as e:
-            logger.error(f"Failed to generate AI insights: {e}")
-            return None
+            logger.error(f"Failed to generate AI insights: {e}. Using fallback.")
+            return fallback
+    
+    def _validate_ai_output(self, data: dict, factsheet: AnalysisFactSheet) -> list[str]:
+        """
+        Validate AI output against strict rules.
+        Returns list of errors (empty = valid).
+        """
+        errors = []
+        
+        # 1. SHAPE VALIDATION - only check_on_site now
+        check_on_site = data.get('check_on_site', [])
+        
+        if len(check_on_site) != 3:
+            errors.append(f"check_on_site has {len(check_on_site)} elements, expected 3")
+        
+        # 2. LENGTH VALIDATION (max 120 chars per element)
+        for i, item in enumerate(check_on_site):
+            if isinstance(item, str) and len(item) > 120:
+                errors.append(f"Element too long ({len(item)} chars): {item[:50]}...")
+        
+        # 3. BLACKLIST CHECK
+        all_text = json.dumps(data, ensure_ascii=False).lower()
+        for phrase in self.BLACKLIST_PHRASES:
+            if phrase.lower() in all_text:
+                errors.append(f"Blacklisted phrase found: '{phrase}'")
+        
+        # 4. CONSISTENCY CHECKS
+        # If data_reason is empty, should not mention "dane niepełne"
+        if not factsheet.data_reason and "dane niepełne" in all_text:
+            errors.append("Mentioned 'dane niepełne' but data_reason is empty")
+        
+        # If roads_penalty >= 6, should not say "spokojna" or "cicha"
+        roads_penalty = factsheet.penalties.get('roads_penalty', 0) if factsheet.penalties else 0
+        if roads_penalty >= 6:
+            if "spokojna" in all_text or "cicha" in all_text:
+                errors.append("Said 'spokojna/cicha' but roads_penalty >= 6")
+        
+        # If primary_blocker == "roads", why_not_higher must mention roads
+        why_not_higher = data.get('why_not_higher', '').lower()
+        if factsheet.primary_blocker == "roads":
+            road_words = ['drog', 'drogi', 'dróg', 'transport', 'kolej', 'szyn', 'tory']
+            if not any(word in why_not_higher for word in road_words):
+                errors.append("primary_blocker is 'roads' but why_not_higher doesn't mention roads")
+        
+        return errors
+    
+    def _generate_fallback_tldr(self, factsheet: AnalysisFactSheet) -> DecisionInsight:
+        """
+        Generate deterministic fallback from factsheet data.
+        Used when AI fails or is unavailable.
+        """
+        # Summary
+        summary = f"{factsheet.verdict_label}."
+        if factsheet.verdict_reason:
+            summary += f" {factsheet.verdict_reason}"
+        
+        # Why not higher
+        why_not_higher = factsheet.primary_blocker_detail or factsheet.verdict_reason or ""
+        
+        # Check on site - generic but actionable
+        check_on_site = [
+            "Zweryfikuj poziom hałasu w godzinach szczytu (8:00, 17:00)",
+            "Sprawdź nasłonecznienie mieszkania o różnych porach",
+            "Oceń stan klatki schodowej i wejścia do budynku",
+        ]
+        
+        return DecisionInsight(
+            summary=summary,
+            check_on_site=check_on_site,
+            why_not_higher=why_not_higher,
+        )
+    
+    def _sanitize_noise_claims(self, data: dict) -> dict:
+        """
+        Post-filter to replace declarative noise/quiet statements with conditional forms.
+        Backup for when AI ignores prompt rules.
+        """
+        import re
+        
+        # Patterns to replace (case insensitive)
+        replacements = [
+            # Noise level declaratives
+            (r'[Pp]oziom hałasu jest\s+(niski|umiarkowany|wysoki|bardzo niski)',
+             'Ryzyko podwyższonego hałasu (wymagana weryfikacja na miejscu)'),
+            (r'[Hh]ałas\s+jest\s+(niski|umiarkowany|wysoki)',
+             'Poziom hałasu wymaga weryfikacji na miejscu'),
+            # Quiet/calm declaratives  
+            (r'[Oo]kolica jest\s+(spokojna|cicha|bardzo cicha)',
+             'Spokój wymaga weryfikacji na miejscu'),
+            (r'[Cc]icha,?\s*(zielona\s+)?okolica',
+             'Spokój i zieleń wymagają weryfikacji'),
+            # Busy roads (no traffic data)
+            (r'[Rr]uchliw(ych|e|ego|ą)\s+dró(g|ż)',
+             'dróg i infrastruktury transportowej'),
+            (r'[Bb]liskość ruchliwych',
+             'Bliskość'),
+        ]
+        
+        def replace_in_text(text: str) -> str:
+            if not isinstance(text, str):
+                return text
+            for pattern, replacement in replacements:
+                text = re.sub(pattern, replacement, text)
+            return text
+        
+        # Apply to all text fields
+        if 'summary' in data:
+            data['summary'] = replace_in_text(data['summary'])
+        
+        if 'quick_facts' in data:
+            data['quick_facts'] = [replace_in_text(f) for f in data['quick_facts']]
+        
+        if 'recommendation_line' in data:
+            data['recommendation_line'] = replace_in_text(data['recommendation_line'])
+        
+        if 'target_audience' in data:
+            data['target_audience'] = replace_in_text(data['target_audience'])
+        
+        if 'disclaimer' in data:
+            data['disclaimer'] = replace_in_text(data['disclaimer'])
+        
+        return data
     
     # Legacy method for backwards compatibility
     def generate_insights(

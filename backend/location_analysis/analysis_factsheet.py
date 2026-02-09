@@ -83,6 +83,21 @@ class AnalysisFactSheet:
     noise_level: str = "unknown"  # 'low', 'moderate', 'high', 'extreme'
     noise_source: str = ""  # e.g., "roads_analysis", "quiet_score"
     
+    # Penalties from scoring engine (for deterministic decisions)
+    penalties: Dict[str, float] = field(default_factory=dict)
+    # e.g., {'noise_penalty': 2.5, 'roads_penalty': 12.0}
+    
+    # Roads debug info (for detailed noise risk assessment)
+    roads_debug: Dict[str, Any] = field(default_factory=dict)
+    # e.g., {'nearest_rails_m': 85, 'nearest_heavy_m': 450, 'count': 8}
+    
+    # Verdict reasons (deterministic, not AI-generated)
+    verdict_reason: Optional[str] = None  # Why this verdict (scoring-based)
+    data_reason: List[str] = field(default_factory=list)  # Coverage gaps / empty signals
+    
+    # Property data (optional, from user input)
+    property_data: Optional[Dict[str, Any]] = None
+    
     def to_ai_prompt_json(self) -> Dict[str, Any]:
         """
         Convert to JSON for AI prompt input.
@@ -99,6 +114,7 @@ class AnalysisFactSheet:
                 "level": self.verdict,
                 "label": self.verdict_label,
                 "confidence": self.confidence,
+                "reason": self.verdict_reason,  # Deterministic reason for verdict
             },
             "primary_blocker": {
                 "category": self.primary_blocker,
@@ -127,6 +143,8 @@ class AnalysisFactSheet:
                 "level": self.noise_level,
                 "source": self.noise_source,
             },
+            "penalties": self.penalties,  # {noise_penalty, roads_penalty}
+            "roads_debug": self.roads_debug,  # Infrastructure proximity details
             "caps_applied": [
                 {
                     "reason": c.reason,
@@ -137,6 +155,9 @@ class AnalysisFactSheet:
                 for c in self.caps_applied
             ],
             "data_quality_flags": self.data_quality_flags,
+            "data_reason": self.data_reason,  # Empty signals / coverage gaps
+            # Property data (optional) - AI can mention if provided
+            "property": self.property_data if self.property_data else None,
         }
 
 
@@ -147,11 +168,15 @@ def build_factsheet_from_scoring(
     quiet_score: float,
     pois_by_category: Dict = None,
     listing = None,
+    data_quality: Optional[Dict[str, Any]] = None,  # NEW: for empty signals
 ) -> AnalysisFactSheet:
     """
     Build AnalysisFactSheet from scoring engine output.
     
     This is the ONLY place where raw data is converted to factsheet.
+    
+    Args:
+        data_quality: Dict with 'empty', 'errors', 'fallback_contributed' from data_quality pipeline
     """
     # Determine noise level from quiet_score
     if quiet_score >= 80:
@@ -162,6 +187,15 @@ def build_factsheet_from_scoring(
         noise_level = "high"
     else:
         noise_level = "extreme"
+    
+    # Extract penalties directly from scoring_result fields (not from debug!)
+    penalties = {
+        'noise_penalty': getattr(scoring_result, 'noise_penalty', 0.0) or 0.0,
+        'roads_penalty': getattr(scoring_result, 'roads_penalty', 0.0) or 0.0,
+    }
+    
+    # Extract roads_debug directly from scoring_result (proper field, not debug dict)
+    roads_debug = getattr(scoring_result, 'roads_debug', {}) or {}
     
     # Build positive drivers from strengths
     positive_drivers = []
@@ -185,20 +219,24 @@ def build_factsheet_from_scoring(
                 detail=w if isinstance(w, str) else str(w),
             ))
     
-    # Determine primary blocker
-    primary_blocker = None
-    primary_blocker_detail = None
+    # Build data_reason from data_quality pipeline (empty signals, errors)
+    data_reason: List[str] = []
+    if data_quality:
+        empty_signals = data_quality.get('empty', []) or []
+        for cat in empty_signals:
+            data_reason.append(f"Brak danych: {cat}")
+        
+        errors = data_quality.get('errors', []) or []
+        for err in errors:
+            data_reason.append(f"Błąd: {err}")
     
-    if noise_level in ('high', 'extreme'):
-        primary_blocker = 'noise'
-        primary_blocker_detail = f"Wysoki poziom hałasu/ruchu ({noise_level})"
-    elif negative_drivers:
-        primary_blocker = negative_drivers[0].category
-        primary_blocker_detail = negative_drivers[0].detail
-    
-    # Detect data quality issues
+    # Detect data quality issues from listing (for disclaimer)
+    # BUT: only for provider-sourced data, not user input
     data_quality_flags = []
-    if listing:
+    listing_source = getattr(listing, 'source', 'user') if listing else 'user'
+    
+    if listing and listing_source not in ('user', 'none'):
+        # Only generate listing-specific warnings for provider data
         if not listing.description or len(listing.description) < 50:
             data_quality_flags.append("missing_description")
         if listing.price and listing.area_sqm:
@@ -207,6 +245,64 @@ def build_factsheet_from_scoring(
                 data_quality_flags.append("suspicious_price_data")
         if listing.location and '+' in listing.location:
             data_quality_flags.append("plus_code_address")
+    elif listing and listing_source == 'user':
+        # For user input, only flag anomalies in provided data
+        if listing.price and listing.area_sqm:
+            price_per_sqm = listing.price / listing.area_sqm
+            if price_per_sqm < 3000 or price_per_sqm > 50000:
+                data_quality_flags.append("suspicious_price_data")
+    
+    # Build property_data for AI (only if user provided any data)
+    property_data = None
+    if listing and (listing.price or listing.area_sqm):
+        property_data = {
+            'source': listing_source,
+            'price': listing.price,
+            'area_sqm': listing.area_sqm,
+            'price_per_sqm': round(listing.price / listing.area_sqm, 2) if (listing.price and listing.area_sqm) else None,
+            'known': True,
+        }
+    
+    # Add empty signals to data_quality_flags for AI disclaimer
+    if data_quality:
+        for cat in (data_quality.get('empty', []) or []):
+            data_quality_flags.append(f"empty_signal:{cat}")
+    
+    # DETERMINISTIC primary_blocker selection (order matters!)
+    # Priority: 1) data gaps, 2) roads infrastructure, 3) noise, 4) negative drivers
+    ROADS_BLOCK_THRESHOLD = 8.0
+    NOISE_BLOCK_THRESHOLD = 2.0
+    
+    primary_blocker = None
+    primary_blocker_detail = None
+    verdict_reason = None
+    
+    roads_penalty = penalties.get('roads_penalty', 0)
+    noise_penalty = penalties.get('noise_penalty', 0)
+    
+    if data_reason:
+        # 1. Data coverage gaps - highest priority
+        primary_blocker = 'data'
+        primary_blocker_detail = data_reason[0]
+        verdict_reason = "Niepełne dane w kluczowej kategorii."
+    elif roads_penalty >= ROADS_BLOCK_THRESHOLD:
+        # 2. Roads infrastructure - noise risk
+        primary_blocker = 'roads'
+        rail_m = roads_debug.get('nearest_rails_m')
+        primary_blocker_detail = f"Bliskość dróg/kolei (roads_penalty={roads_penalty:.1f})"
+        if rail_m:
+            primary_blocker_detail = f"Bliskość dróg/kolei (~{int(rail_m)}m do szyn)"
+        verdict_reason = "Ryzyko podwyższonego hałasu z infrastruktury drogowej."
+    elif noise_penalty >= NOISE_BLOCK_THRESHOLD:
+        # 3. Noise level
+        primary_blocker = 'noise'
+        primary_blocker_detail = f"Niska cisza (quiet_score={quiet_score:.0f}, noise_penalty={noise_penalty:.1f})"
+        verdict_reason = "Poziom hałasu wymaga weryfikacji na miejscu."
+    elif negative_drivers:
+        # 4. First negative driver
+        primary_blocker = negative_drivers[0].category
+        primary_blocker_detail = negative_drivers[0].detail
+        verdict_reason = f"Słaby wynik w kategorii: {negative_drivers[0].category_name}"
     
     # Map verdict level to Polish label
     verdict_labels = {
@@ -232,4 +328,10 @@ def build_factsheet_from_scoring(
         data_quality_flags=data_quality_flags,
         noise_level=noise_level,
         noise_source="quiet_score",
+        penalties=penalties,
+        roads_debug=roads_debug,
+        verdict_reason=verdict_reason,
+        data_reason=data_reason,
+        property_data=property_data,
     )
+

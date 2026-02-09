@@ -16,6 +16,7 @@ from .scoring.profiles import get_profile, get_profiles_summary
 from .scoring.profile_engine import create_scoring_engine
 from .ai_insights import generate_decision_insights, generate_insights_from_factsheet
 from .analysis_factsheet import build_factsheet_from_scoring
+from .data_quality import build_data_quality_report
 
 logger = logging.getLogger(__name__)
 
@@ -112,7 +113,7 @@ class AnalysisService:
             # 3. Buduj raport
             yield json.dumps({'status': 'generating', 'message': 'Generowanie raportu końcowego...'}) + '\n'
             report = self.report_builder.build(
-                listing=listing,
+                property_input=listing,
                 neighborhood_score=neighborhood_score,
                 poi_stats=poi_stats,
                 all_pois=pois
@@ -139,8 +140,8 @@ class AnalysisService:
         self,
         lat: float,
         lon: float,
-        price: float,
-        area_sqm: float,
+        price: Optional[float],  # Opcjonalne - dane nieruchomości
+        area_sqm: Optional[float],  # Opcjonalne - dane nieruchomości
         address: str,
         radius: int = 500,
         reference_url: str = None,
@@ -154,6 +155,9 @@ class AnalysisService:
         Yields: dict z eventem (status, message, result?)
         
         Args:
+            lat, lon: Koordynaty (wymagane)
+            price: Cena nieruchomości (opcjonalna, od użytkownika)
+            area_sqm: Metraż (opcjonalny, od użytkownika) 
             profile_key: Klucz nowego profilu (urban, family, quiet_green, remote_work, active_sport, car_first)
             user_profile: [LEGACY] Stary parametr - mapowany na profile_key jeśli profile_key nie podany
             radius_overrides: Opcjonalne nadpisanie promieni per kategoria (np. {'shops': 800})
@@ -189,19 +193,21 @@ class AnalysisService:
                 'message': f'Rozpoczynam analizę lokalizacji dla profilu: {profile.emoji} {profile.name}...'
             }) + '\n'
             
-            # Twórz sztuczny PropertyData z podanych danych
+            # Twórz PropertyData z podanych danych (source='user')
             listing = PropertyData(
                 url=reference_url or f"location://{lat},{lon}",
                 title=address,
-                price=price,
-                area_sqm=area_sqm,
+                price=price,  # Może być None
+                area_sqm=area_sqm,  # Może być None
                 latitude=lat,
                 longitude=lon,
                 has_precise_location=True,
                 location=address,
             )
+            # Oznacz źródło danych jako 'user' (nie provider)
+            listing.source = 'user'
             
-            # Oblicz price_per_sqm
+            # Oblicz price_per_sqm tylko jeśli oba są podane
             if price and area_sqm:
                 listing.price_per_sqm = round(price / area_sqm, 2)
             
@@ -239,6 +245,17 @@ class AnalysisService:
                             for p in items[:10]
                         ]
                     logger.debug(f"Detected POIs (top10): {poi_debug}")
+                
+                # Build DataQualityReport for debugging and UI
+                data_quality = build_data_quality_report(
+                    pois_by_category=pois,
+                    radii=effective_radius_m,
+                    overpass_status="ok",  # TODO: track from hybrid provider
+                    overpass_had_retry=False,  # TODO: track from hybrid provider
+                    fallback_started=[],  # TODO: track from hybrid provider
+                    fallback_contributed=[],  # TODO: track from hybrid provider
+                    cache_used=poi_cache_used,
+                )
                 
                 yield json.dumps({'status': 'calculating', 'message': 'Obliczanie scoringu bazowego...'}) + '\n'
                 
@@ -304,7 +321,7 @@ class AnalysisService:
             # Buduj raport
             yield json.dumps({'status': 'generating', 'message': 'Generowanie raportu końcowego...'}) + '\n'
             report = self.report_builder.build(
-                listing=listing,
+                property_input=listing,
                 neighborhood_score=neighborhood_score,
                 poi_stats=poi_stats,
                 all_pois=pois
@@ -324,6 +341,8 @@ class AnalysisService:
                 'poi_provider': poi_provider,
                 'poi_cache_used': poi_cache_used,  # DEV: czy dane POI były z cache
                 'coords': {'lat': lat, 'lon': lon},
+                # Data Quality Report for DEV mode
+                'data_quality': data_quality.to_dict() if data_quality else None,
             }
             
             # Zapisz do bazy i pobierz public_id
@@ -483,8 +502,6 @@ class AnalysisService:
                     'neighborhood_score': report.neighborhood_score,
                     'neighborhood_data': report.neighborhood_details,
                     'report_data': report.to_dict(),
-                    'pros': report.pros,
-                    'cons': report.cons,
                     'checklist': report.checklist,
                     'source_provider': get_provider_for_url(url).name if get_provider_for_url(url) else '',
                     'parsing_errors': listing.errors,
@@ -559,8 +576,6 @@ class AnalysisService:
                     'neighborhood_score': report.neighborhood_score,
                     'neighborhood_data': report.neighborhood_details,
                     'report_data': report_dict,
-                    'pros': report.pros,
-                    'cons': report.cons,
                     'checklist': report.checklist,
                     'source_provider': 'location',
                     'analysis_radius': radius,

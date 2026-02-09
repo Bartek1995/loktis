@@ -31,6 +31,7 @@ class OtodomProvider(BaseProvider):
     
     def parse(self, url: str) -> ListingData:
         listing = ListingData(url=url)
+        listing.source = "fetched"  # Mark as fetched from URL
         
         try:
             response = requests.get(

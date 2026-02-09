@@ -302,7 +302,8 @@ const features = ref([
 
 // Computed
 const canSubmit = computed(() => {
-  return selectedLocation.value !== null && price.value !== null && areaSqm.value !== null && !isLoading.value
+  // Tylko lokalizacja jest wymagana - cena i metraż są opcjonalne
+  return selectedLocation.value !== null && !isLoading.value
 })
 
 const pricePerSqm = computed(() => {
@@ -322,7 +323,7 @@ function clearLocation() {
 }
 
 async function handleAnalyze() {
-  if (!canSubmit.value || !selectedLocation.value || price.value === null || areaSqm.value === null) return
+  if (!canSubmit.value || !selectedLocation.value) return
   
   isLoading.value = true
   loadingStatus.value = 'Inicjalizacja...'
@@ -333,8 +334,8 @@ async function handleAnalyze() {
     const report = await analyzerApi.analyzeLocationStream(
       selectedLocation.value.lat,
       selectedLocation.value.lng,
-      price.value,
-      areaSqm.value,
+      price.value ?? null,  // Opcjonalne - przekazuj null jeśli nie podano
+      areaSqm.value ?? null,  // Opcjonalne - przekazuj null jeśli nie podano
       selectedLocation.value.address,
       radius.value,
       referenceUrl.value || undefined,
@@ -645,46 +646,48 @@ onMounted(() => {
               </div>
             </div>
             
-            <!-- Step 2 & 3: Price & Area -->
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
-              <div>
-                <div class="flex items-center gap-3 mb-4">
-                  <span class="inline-flex items-center justify-center w-10 h-10 rounded-full bg-blue-gradient text-white font-bold shadow-md">2</span>
-                  <h3 class="font-semibold text-lg text-neutral-800">Cena</h3>
-                  <span class="text-red-500 text-sm">*</span>
-                </div>
-                <div class="relative">
-                  <input 
-                    v-model.number="price"
-                    type="number"
-                    placeholder="np. 650000"
-                    min="0"
-                    max="50000000"
-                    class="w-full py-4 px-5 pr-16 text-lg rounded-xl border-2 border-gray-200 focus:border-[#0c66ee] focus:ring-2 focus:ring-[#0c66ee]/20 outline-none transition-all"
-                    :disabled="isLoading"
-                  />
-                  <span class="absolute right-5 top-1/2 -translate-y-1/2 text-gray-400 font-medium">PLN</span>
+            <!-- Step 2 & 3: Price & Area (Opcjonalne) -->
+            <div class="mb-6">
+              <div class="flex items-center gap-3 mb-2">
+                <span class="inline-flex items-center justify-center w-10 h-10 rounded-full bg-gradient-to-r from-slate-400 to-gray-500 text-white font-bold shadow-md">2</span>
+                <div>
+                  <h3 class="font-semibold text-lg text-neutral-800">Znane dane nieruchomości</h3>
+                  <p class="text-sm text-gray-500">Opcjonalne - wzbogacą raport o kontekst cenowy</p>
                 </div>
               </div>
               
-              <div>
-                <div class="flex items-center gap-3 mb-4">
-                  <span class="inline-flex items-center justify-center w-10 h-10 rounded-full bg-blue-gradient text-white font-bold shadow-md">3</span>
-                  <h3 class="font-semibold text-lg text-neutral-800">Metraż</h3>
-                  <span class="text-red-500 text-sm">*</span>
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+                <div>
+                  <label class="block text-sm font-medium text-gray-600 mb-2">Cena</label>
+                  <div class="relative">
+                    <input 
+                      v-model.number="price"
+                      type="number"
+                      placeholder="np. 650000"
+                      min="0"
+                      max="50000000"
+                      class="w-full py-3 px-4 pr-16 text-base rounded-xl border-2 border-gray-200 focus:border-[#0c66ee] focus:ring-2 focus:ring-[#0c66ee]/20 outline-none transition-all"
+                      :disabled="isLoading"
+                    />
+                    <span class="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 font-medium">PLN</span>
+                  </div>
                 </div>
-                <div class="relative">
-                  <input 
-                    v-model.number="areaSqm"
-                    type="number"
-                    placeholder="np. 54"
-                    min="1"
-                    max="1000"
-                    step="0.1"
-                    class="w-full py-4 px-5 pr-12 text-lg rounded-xl border-2 border-gray-200 focus:border-[#0c66ee] focus:ring-2 focus:ring-[#0c66ee]/20 outline-none transition-all"
-                    :disabled="isLoading"
-                  />
-                  <span class="absolute right-5 top-1/2 -translate-y-1/2 text-gray-400 font-medium">m²</span>
+                
+                <div>
+                  <label class="block text-sm font-medium text-gray-600 mb-2">Metraż</label>
+                  <div class="relative">
+                    <input 
+                      v-model.number="areaSqm"
+                      type="number"
+                      placeholder="np. 54"
+                      min="1"
+                      max="1000"
+                      step="0.1"
+                      class="w-full py-3 px-4 pr-12 text-base rounded-xl border-2 border-gray-200 focus:border-[#0c66ee] focus:ring-2 focus:ring-[#0c66ee]/20 outline-none transition-all"
+                      :disabled="isLoading"
+                    />
+                    <span class="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 font-medium">m²</span>
+                  </div>
                 </div>
               </div>
             </div>
@@ -701,7 +704,7 @@ onMounted(() => {
             <!-- Profile Selector -->
             <div class="mb-6">
               <div class="flex items-center gap-3 mb-4">
-                <span class="inline-flex items-center justify-center w-10 h-10 rounded-full bg-gradient-to-r from-purple-400 to-violet-500 text-white font-bold shadow-md">4</span>
+                <span class="inline-flex items-center justify-center w-10 h-10 rounded-full bg-gradient-to-r from-purple-400 to-violet-500 text-white font-bold shadow-md">3</span>
                 <h3 class="font-semibold text-lg text-neutral-800">Twój profil</h3>
               </div>
               

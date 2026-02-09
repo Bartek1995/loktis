@@ -94,6 +94,10 @@ class ScoringResult:
     weaknesses: List[str] = field(default_factory=list)
     debug: Dict[str, Any] = field(default_factory=dict)
     
+    # Roads infrastructure debug info (proper field, not extracted from debug)
+    # Used for deterministic gating of "Spokojna okolica" and primary_blocker selection
+    roads_debug: Dict[str, Any] = field(default_factory=dict)
+    
     def to_dict(self) -> dict:
         return {
             'total_score': round(self.total_score, 1),
@@ -112,6 +116,7 @@ class ScoringResult:
             'warnings': self.warnings,
             'strengths': self.strengths,
             'weaknesses': self.weaknesses,
+            'roads_debug': self.roads_debug,
             'debug': self.debug,
         }
 
@@ -332,8 +337,8 @@ class ProfileScoringEngine:
         # 7. Verdict
         verdict = self.profile.thresholds.get_verdict(total_score)
         
-        # 8. Strengths & Weaknesses
-        strengths, weaknesses = self._extract_highlights(category_results, quiet_score)
+        # 8. Strengths & Weaknesses (with roads_debug gating)
+        strengths, weaknesses = self._extract_highlights(category_results, quiet_score, roads_debug)
         
         # 9. Warnings
         warnings = self._generate_warnings(category_results, quiet_score, critical_caps_applied)
@@ -384,6 +389,7 @@ class ProfileScoringEngine:
             warnings=warnings,
             strengths=strengths,
             weaknesses=weaknesses,
+            roads_debug=roads_debug,
             debug=debug_payload,
         )
 
@@ -678,6 +684,7 @@ class ProfileScoringEngine:
         self,
         category_results: Dict[str, CategoryScoreResult],
         quiet_score: float,
+        roads_debug: Optional[Dict[str, Any]] = None,
     ) -> Tuple[List[str], List[str]]:
         """Ekstrahuje mocne i słabe strony."""
         strengths = []
@@ -695,9 +702,26 @@ class ProfileScoringEngine:
             elif result.score <= 30 and result.is_critical:
                 weaknesses.append(f"⚠️ {name}: słaby wynik ({result.score:.0f})")
         
-        # Quiet Score
+        # Quiet Score - GATED by roads infrastructure proximity
+        # Block "Spokojna okolica" when roads_debug indicates noise risk
+        is_quiet_blocked = False
+        if roads_debug:
+            # Gate based on specific infrastructure distances (more robust than penalty threshold)
+            if roads_debug.get('nearest_primary_m') and roads_debug['nearest_primary_m'] <= 250:
+                is_quiet_blocked = True
+            if roads_debug.get('nearest_rails_m') and roads_debug['nearest_rails_m'] <= 200:
+                is_quiet_blocked = True
+            if roads_debug.get('nearest_secondary_m') and roads_debug['nearest_secondary_m'] <= 300:
+                is_quiet_blocked = True
+            if roads_debug.get('nearest_heavy_m') and roads_debug['nearest_heavy_m'] <= 600:
+                is_quiet_blocked = True
+            if roads_debug.get('count', 0) >= 10:
+                is_quiet_blocked = True
+        
         if quiet_score >= 70:
-            strengths.append(f"🔇 Spokojna okolica ({quiet_score:.0f}/100)")
+            if not is_quiet_blocked:
+                strengths.append(f"🔇 Spokojna okolica ({quiet_score:.0f}/100)")
+            # else: blocked due to roads infrastructure, don't emit the claim
         elif quiet_score <= 35:
             weaknesses.append(f"🔊 Głośna okolica ({quiet_score:.0f}/100)")
         

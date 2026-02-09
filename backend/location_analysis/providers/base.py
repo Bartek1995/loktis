@@ -30,6 +30,9 @@ class PropertyData:
     raw_data: dict = field(default_factory=dict)
     errors: List[str] = field(default_factory=list)
     
+    # Source mode: "none" = no listing data, "manual" = user entered, "fetched" = parsed from URL
+    source: str = "none"
+    
     def to_dict(self) -> dict:
         return {
             'url': self.url,
@@ -47,6 +50,7 @@ class PropertyData:
             'longitude': self.longitude,
             'has_precise_location': self.has_precise_location,
             'errors': self.errors,
+            'source': self.source,
         }
 
 

@@ -6,6 +6,8 @@
 import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
 import { analyzerApi, type AnalysisReport, type POICategoryStats, type TrafficAnalysis, type NatureMetrics, type POIItem } from '@/api/analyzerApi';
+import SettingsDrawer from '@/components/SettingsDrawer.vue';
+import CoverageDebugPanel from '@/components/CoverageDebugPanel.vue';
 import * as L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 
@@ -52,6 +54,9 @@ const map = ref<L.Map | null>(null);
 const googleMap = ref<any>(null);
 const googleMarkers = ref<any[]>([]);
 const leafletPoiMarkers = ref<L.CircleMarker[]>([]);
+
+// DEV mode toggle (persisted in localStorage via SettingsDrawer)
+const devMode = ref(false);
 
 // Category visibility state (all visible by default)
 const categoryVisibility = ref<Record<string, boolean>>({
@@ -294,6 +299,60 @@ const narrativeSummary = computed(() => {
   };
 });
 
+// Data quality from generation_params (for DEV mode)
+// Note: data_quality is a new field from backend, not yet in TypeScript interface
+const dataQuality = computed(() => {
+  return (report.value as any)?.generation_params?.data_quality || null;
+});
+
+// UNIFIED CONFIDENCE - single source of truth
+// Prefers data_quality.confidence_pct (from coverage analysis) over legacy verdict.confidence
+const unifiedConfidence = computed(() => {
+  const dq = dataQuality.value;
+  
+  // Priority 1: data_quality from generation_params (new system)
+  if (dq?.confidence_pct !== undefined) {
+    return {
+      pct: dq.confidence_pct,
+      source: 'data_quality',
+      reasons: dq.reasons || [],
+    };
+  }
+  
+  // Priority 2: legacy verdict.confidence (fallback)
+  if (report.value?.verdict?.confidence !== undefined) {
+    return {
+      pct: report.value.verdict.confidence,
+      source: 'verdict_legacy',
+      reasons: [],
+    };
+  }
+  
+  return { pct: 70, source: 'default', reasons: [] };
+});
+
+// Confidence color helper
+const confidenceColor = computed(() => {
+  const pct = unifiedConfidence.value.pct;
+  if (pct >= 80) return 'emerald';
+  if (pct >= 60) return 'amber';
+  return 'red';
+});
+
+// Has actual data quality issues (errors, not just empty signal)
+// SEMANTIC: 'empty' = valid signal (0 in radius), 'error' = data problem
+const hasDataQualityIssues = computed(() => {
+  const dq = dataQuality.value;
+  if (!dq) return false;
+  
+  // Only show alert for ERRORS, not for empty categories
+  const hasErrors = (dq.error_categories?.length || 0) > 0;
+  const hasOverpassError = dq.overpass_status === 'error';
+  const hasReasons = (dq.reasons?.length || 0) > 0;
+  
+  return hasErrors || hasOverpassError || hasReasons;
+});
+
 // Main limiting factor - explains why score isn't higher
 const mainLimitingFactor = computed(() => {
   if (!report.value?.scoring) return null;
@@ -326,7 +385,7 @@ const mainLimitingFactor = computed(() => {
   // Check for roads penalty
   if (scoring.roads_penalty && scoring.roads_penalty > 5) {
     return {
-      reason: `Bliskość ruchliwych dróg – może wpływać na komfort i jakość powietrza`,
+      reason: `Bliskość dróg i infrastruktury transportowej – może wpływać na komfort i jakość powietrza`,
       type: 'roads'
     };
   }
@@ -465,6 +524,37 @@ function formatPricePerSqm(price: number | null): string {
     currency: 'PLN',
     maximumFractionDigits: 0,
   }).format(price) + '/m²';
+}
+
+// Field source helpers for property data section
+function getFieldSourceClass(source: string | undefined): string {
+  switch (source) {
+    case 'user': return 'text-emerald-600';
+    case 'listing': return 'text-indigo-600';
+    case 'computed': return 'text-blue-600';
+    case 'merged': return 'text-purple-600';
+    default: return 'text-gray-500';
+  }
+}
+
+function getFieldSourceIcon(source: string | undefined): string {
+  switch (source) {
+    case 'user': return 'pi pi-check-circle text-xs';
+    case 'listing': return 'pi pi-file text-xs';
+    case 'computed': return 'pi pi-calculator text-xs';
+    case 'merged': return 'pi pi-link text-xs';
+    default: return 'pi pi-question-circle text-xs';
+  }
+}
+
+function getFieldSourceLabel(source: string | undefined): string {
+  switch (source) {
+    case 'user': return 'podane';
+    case 'listing': return 'z ogłoszenia';
+    case 'computed': return 'wyliczone';
+    case 'merged': return 'mieszane';
+    default: return 'nieznane';
+  }
 }
 
 function getCategoryName(category: string): string {
@@ -978,6 +1068,26 @@ onMounted(async () => {
       
       <!-- Report -->
       <div v-else-if="hasReport" class="flex flex-col gap-6">
+        <!-- DEV Mode: Coverage Debug Panel -->
+        <CoverageDebugPanel v-if="devMode && dataQuality" :data-quality="dataQuality" />
+        
+        <!-- USER Mode: Data Quality Alert (only for actual errors, not empty) -->
+        <div v-if="!devMode && hasDataQualityIssues" 
+             class="p-4 rounded-xl border flex items-start gap-3"
+             :class="unifiedConfidence.pct < 60 ? 'bg-red-50 border-red-200' : 'bg-amber-50 border-amber-200'">
+          <span class="text-xl">{{ unifiedConfidence.pct < 60 ? '⚠️' : 'ℹ️' }}</span>
+          <div>
+            <p class="font-semibold mb-1" :class="unifiedConfidence.pct < 60 ? 'text-red-800' : 'text-amber-800'">
+              Możliwe niepełne dane (pewność: {{ unifiedConfidence.pct }}%)
+            </p>
+            <ul v-if="unifiedConfidence.reasons.length" class="text-sm space-y-0.5" :class="unifiedConfidence.pct < 60 ? 'text-red-700' : 'text-amber-700'">
+              <li v-for="(reason, idx) in unifiedConfidence.reasons.slice(0, 3)" :key="idx">• {{ reason }}</li>
+            </ul>
+            <p v-else class="text-sm" :class="unifiedConfidence.pct < 60 ? 'text-red-700' : 'text-amber-700'">
+              Niektóre źródła danych mogły być niedostępne
+            </p>
+          </div>
+        </div>
         <!-- Header -->
         <div class="relative overflow-hidden bg-white rounded-2xl p-6 shadow-lg border border-slate-100">
           <div class="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-blue-400 via-blue-500 to-blue-600"></div>
@@ -1054,54 +1164,72 @@ onMounted(async () => {
           <span>{{ warn }}</span>
         </div>
         
-        <!-- TL;DR Section -->
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
-          <!-- Plusy -->
-          <div class="relative bg-gradient-to-br from-emerald-50 to-green-50 rounded-2xl p-6 shadow-lg border border-emerald-100 overflow-hidden">
-            <div class="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-emerald-400 to-green-500"></div>
-            
-            <div class="flex items-center gap-3 mb-5">
-              <div class="w-12 h-12 rounded-xl bg-gradient-to-br from-emerald-400 to-green-500 flex items-center justify-center shadow-lg">
-                <i class="pi pi-check-circle text-xl text-white"></i>
-              </div>
-              <div>
-                <h3 class="font-bold text-lg text-slate-800">Plusy</h3>
-                <p class="text-sm text-slate-600">{{ report!.tldr.pros.length }} zalet</p>
-              </div>
+        <!-- TL;DR Section removed - information now consolidated in AI insights -->
+        
+        <!-- Znane dane nieruchomości - tylko gdy podano jakiekolwiek dane -->
+        <div 
+          v-if="report!.property_completeness?.has_any" 
+          class="relative bg-white rounded-2xl p-6 shadow-lg border border-slate-100 overflow-hidden"
+        >
+          <div class="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-slate-300 to-gray-400"></div>
+          
+          <div class="flex items-center gap-3 mb-4">
+            <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-slate-400 to-gray-500 flex items-center justify-center shadow-md">
+              <i class="pi pi-home text-white"></i>
             </div>
-            
-            <ul class="space-y-3">
-              <li v-for="pro in report!.tldr.pros" :key="pro" class="flex items-start gap-3 p-3 bg-white/60 rounded-xl">
-                <span class="flex-shrink-0 w-6 h-6 rounded-full bg-emerald-500 flex items-center justify-center mt-0.5">
-                  <i class="pi pi-check text-white text-xs"></i>
-                </span>
-                <span class="text-slate-700">{{ pro }}</span>
-              </li>
-            </ul>
+            <div>
+              <h2 class="text-lg font-bold text-slate-900">Znane dane nieruchomości</h2>
+              <!-- Dynamic subtitle based on source -->
+              <p class="text-sm text-gray-500">
+                <template v-if="report!.property_completeness?.source === 'listing'">Dane z ogłoszenia</template>
+                <template v-else-if="report!.property_completeness?.source === 'merged'">Dane mieszane (ogłoszenie + użytkownik)</template>
+                <template v-else>Dane podane przez użytkownika</template>
+              </p>
+            </div>
           </div>
           
-          <!-- Ryzyka -->
-          <div class="relative bg-gradient-to-br from-orange-50 to-amber-50 rounded-2xl p-6 shadow-lg border border-orange-100 overflow-hidden">
-            <div class="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-orange-400 to-amber-500"></div>
-            
-            <div class="flex items-center gap-3 mb-5">
-              <div class="w-12 h-12 rounded-xl bg-gradient-to-br from-orange-400 to-amber-500 flex items-center justify-center shadow-lg">
-                <i class="pi pi-exclamation-triangle text-xl text-white"></i>
+          <div class="grid grid-cols-2 md:grid-cols-3 gap-4">
+            <!-- Cena -->
+            <div v-if="report!.property_completeness?.has_price" class="bg-slate-50 rounded-xl p-4">
+              <div class="text-sm text-gray-500 mb-1">Cena</div>
+              <div class="text-lg font-bold text-slate-900">
+                {{ formatPrice(report!.listing.price) }}
               </div>
-              <div>
-                <h3 class="font-bold text-lg text-slate-800">Potencjalne ryzyka</h3>
-                <p class="text-sm text-slate-600">{{ report!.tldr.cons.length }} uwag</p>
+              <div 
+                class="text-xs mt-1 flex items-center gap-1"
+                :class="getFieldSourceClass(report!.property_completeness?.fields?.price?.source)"
+              >
+                <i :class="getFieldSourceIcon(report!.property_completeness?.fields?.price?.source)"></i>
+                {{ getFieldSourceLabel(report!.property_completeness?.fields?.price?.source) }}
               </div>
             </div>
             
-            <ul class="space-y-3">
-              <li v-for="con in report!.tldr.cons" :key="con" class="flex items-start gap-3 p-3 bg-white/60 rounded-xl">
-                <span class="flex-shrink-0 w-6 h-6 rounded-full bg-orange-500 flex items-center justify-center mt-0.5">
-                  <i class="pi pi-exclamation-triangle text-white text-xs"></i>
-                </span>
-                <span class="text-slate-700">{{ con }}</span>
-              </li>
-            </ul>
+            <!-- Metraż -->
+            <div v-if="report!.property_completeness?.has_area" class="bg-slate-50 rounded-xl p-4">
+              <div class="text-sm text-gray-500 mb-1">Metraż</div>
+              <div class="text-lg font-bold text-slate-900">
+                {{ report!.listing.area_sqm }} m²
+              </div>
+              <div 
+                class="text-xs mt-1 flex items-center gap-1"
+                :class="getFieldSourceClass(report!.property_completeness?.fields?.area_sqm?.source)"
+              >
+                <i :class="getFieldSourceIcon(report!.property_completeness?.fields?.area_sqm?.source)"></i>
+                {{ getFieldSourceLabel(report!.property_completeness?.fields?.area_sqm?.source) }}
+              </div>
+            </div>
+            
+            <!-- Cena/m² (zawsze computed) -->
+            <div v-if="report!.property_completeness?.has_price_per_sqm" class="bg-blue-50 rounded-xl p-4">
+              <div class="text-sm text-gray-500 mb-1">Cena za m²</div>
+              <div class="text-lg font-bold text-slate-900">
+                {{ formatPrice(report!.listing.price_per_sqm) }}/m²
+              </div>
+              <div class="text-xs text-blue-600 mt-1 flex items-center gap-1">
+                <i class="pi pi-calculator text-xs"></i>
+                wyliczone
+              </div>
+            </div>
           </div>
         </div>
         
@@ -1139,13 +1267,13 @@ onMounted(async () => {
                 <span 
                   class="px-3 py-1 rounded-full text-xs font-semibold cursor-help"
                   :class="{
-                    'bg-emerald-100 text-emerald-700': report!.verdict.confidence >= 80,
-                    'bg-amber-100 text-amber-700': report!.verdict.confidence >= 60 && report!.verdict.confidence < 80,
-                    'bg-slate-100 text-slate-700': report!.verdict.confidence < 60
+                    'bg-emerald-100 text-emerald-700': unifiedConfidence.pct >= 80,
+                    'bg-amber-100 text-amber-700': unifiedConfidence.pct >= 60 && unifiedConfidence.pct < 80,
+                    'bg-slate-100 text-slate-700': unifiedConfidence.pct < 60
                   }"
                   :title="confidenceExplanation || 'Pewność oznacza, w jakim stopniu lokalizacja spełnia kluczowe potrzeby wybranego profilu'"
                 >
-                  {{ report!.verdict.confidence }}% pewności
+                  {{ unifiedConfidence.pct }}% pewności
                 </span>
               </div>
               
@@ -1411,8 +1539,11 @@ onMounted(async () => {
         </div>
         
         <!-- NOTE: 'Jak użyć tego raportu' section moved to top of report near verdict -->
-        <!-- Dane z ogłoszenia -->
-        <div class="relative bg-white rounded-2xl p-6 shadow-lg border border-slate-100 overflow-hidden">
+        <!-- Dane z ogłoszenia - tylko gdy źródło to listing/provider (nie user input) i są dane listing-specific -->
+        <div 
+          v-if="report!.listing?.source !== 'user' && (report!.listing?.description || report!.listing?.images?.length)"
+          class="relative bg-white rounded-2xl p-6 shadow-lg border border-slate-100 overflow-hidden"
+        >
           <div class="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-blue-400 via-indigo-500 to-violet-500"></div>
           
           <div class="flex items-center gap-3 mb-6">
@@ -1583,7 +1714,8 @@ onMounted(async () => {
                         </div>
                       </div>
                     </div>
-                    <div class="text-sm text-slate-600">
+                    <!-- DEV only: element count -->
+                    <div v-if="devMode" class="text-sm text-slate-600">
                       {{ natureMetrics.total_green_elements }} elementów w zasięgu
                     </div>
                   </div>
@@ -1904,6 +2036,9 @@ onMounted(async () => {
       </div>
     </div>
   </div>
+  
+  <!-- Settings Drawer (DEV mode toggle) -->
+  <SettingsDrawer v-model:dev-mode="devMode" />
 </template>
 
 <style scoped>

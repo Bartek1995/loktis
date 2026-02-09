@@ -41,14 +41,16 @@ class AnalyzeLocationRequestSerializer(serializers.Serializer):
         help_text="Długość geograficzna"
     )
     price = serializers.FloatField(
-        required=True,
+        required=False,
+        allow_null=True,
         min_value=0,
-        help_text="Cena nieruchomości"
+        help_text="Cena nieruchomości (opcjonalna)"
     )
     area_sqm = serializers.FloatField(
-        required=True,
+        required=False,
+        allow_null=True,
         min_value=1,
-        help_text="Powierzchnia w m²"
+        help_text="Powierzchnia w m² (opcjonalna)"
     )
     address = serializers.CharField(
         required=True,
@@ -112,12 +114,6 @@ class AnalyzeLocationRequestSerializer(serializers.Serializer):
 
 
 
-class TLDRSerializer(serializers.Serializer):
-    """TL;DR sekcja raportu."""
-    pros = serializers.ListField(child=serializers.CharField())
-    cons = serializers.ListField(child=serializers.CharField())
-
-
 class PropertyDataSerializer(serializers.Serializer):
     """Dane o nieruchomości."""
     url = serializers.CharField(allow_blank=True)
@@ -152,7 +148,7 @@ class AnalysisReportSerializer(serializers.Serializer):
     success = serializers.BooleanField()
     errors = serializers.ListField(child=serializers.CharField())
     warnings = serializers.ListField(child=serializers.CharField())
-    tldr = TLDRSerializer()
+    # tldr removed - no longer displayed in frontend
     listing = PropertyDataSerializer()
     neighborhood = NeighborhoodSerializer()
     checklist = serializers.ListField(child=serializers.CharField())

@@ -20,7 +20,8 @@ export interface TLDRData {
   cons: string[];
 }
 
-export interface ListingData {
+// Dane nieruchomości (opcjonalne, podane przez użytkownika)
+export interface PropertyData {
   url: string;
   title: string;
   price: number | null;
@@ -35,6 +36,34 @@ export interface ListingData {
   longitude: number | null;
   has_precise_location: boolean;
   errors: string[];
+  source?: 'user' | 'listing' | 'provider' | 'merged';  // Źródło danych
+}
+
+// Legacy alias
+export type ListingData = PropertyData;
+
+// Kompletność danych nieruchomości z per-field source tracking
+export interface PropertyFieldInfo {
+  value: number | string | null;
+  source: 'user' | 'listing' | 'computed' | 'merged';
+}
+
+export interface PropertyCompleteness {
+  has_any: boolean;
+  source?: 'user' | 'listing' | 'merged';
+  fields?: {
+    price?: PropertyFieldInfo | null;
+    area_sqm?: PropertyFieldInfo | null;
+    price_per_sqm?: PropertyFieldInfo | null;
+    rooms?: PropertyFieldInfo | null;
+    floor?: PropertyFieldInfo | null;
+  };
+  // Legacy flat flags
+  has_price: boolean;
+  has_area: boolean;
+  has_price_per_sqm: boolean;
+  has_rooms: boolean;
+  has_floor: boolean;
 }
 
 export interface POIItem {
@@ -195,7 +224,11 @@ export interface AnalysisReport {
   errors: string[];
   warnings: string[];
   tldr: TLDRData;
-  listing: ListingData;
+  // Nowa struktura - property zamiast listing
+  property?: PropertyData;
+  property_completeness?: PropertyCompleteness;
+  // Legacy alias
+  listing: PropertyData;
   neighborhood: NeighborhoodData;
   checklist: string[];
   limitations: string[];
@@ -334,14 +367,14 @@ export const analyzerApi = {
 
   /**
    * Analizuje lokalizację (location-first model)
-   * User podaje: lokalizację, cenę, metraż
+   * User podaje: lokalizację (wymagane), cenę i metraż (opcjonalne)
    * Link do ogłoszenia jest opcjonalny (tylko referencja)
    */
   async analyzeLocationStream(
     lat: number,
     lng: number,
-    price: number,
-    areaSqm: number,
+    price: number | null,  // Opcjonalne - dane nieruchomości
+    areaSqm: number | null,  // Opcjonalne - dane nieruchomości
     address: string,
     radius: number,
     referenceUrl?: string,
@@ -353,8 +386,8 @@ export const analyzerApi = {
     const body: Record<string, unknown> = { 
       latitude: lat, 
       longitude: lng, 
-      price,
-      area_sqm: areaSqm,
+      price: price,  // Może być null
+      area_sqm: areaSqm,  // Może być null
       address,
       radius,
       profile_key: profileKey,  // Nowy parametr
