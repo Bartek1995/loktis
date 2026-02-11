@@ -334,7 +334,8 @@ class OverpassClient:
         self,
         lat: float,
         lon: float,
-        radius_m: int = 500
+        radius_m: int = 500,
+        trace_ctx: 'AnalysisTraceContext | None' = None,
     ) -> Tuple[Dict[str, List[POI]], Dict[str, Any]]:
         """
         Pobiera punkty POI i metryki zieleni w okolicy (Single Batch Request).
@@ -344,6 +345,9 @@ class OverpassClient:
             - pois_by_category: Dict kategorii do list POI
             - metrics: Dict z metrykami (np. 'nature' -> NatureMetrics.to_dict())
         """
+        from ..diagnostics import get_diag_logger, AnalysisTraceContext
+        ctx = trace_ctx or AnalysisTraceContext()
+        slog = get_diag_logger(__name__, ctx)
         
         # 1. Zbuduj wielkie Query (Union)
         union_parts = []
@@ -372,9 +376,11 @@ class OverpassClient:
         max_retries = 4
         
         for attempt in range(max_retries):
+            endpoint = self._get_endpoint()
+            token = slog.req_start(provider="overpass", op="batch_query", stage="geo", meta={"endpoint": endpoint, "attempt": attempt + 1})
             try:
                 response = requests.post(
-                    self._get_endpoint(),
+                    endpoint,
                     data={'data': overpass_query},
                     timeout=self.TIMEOUT * (attempt + 1),
                     headers={'Content-Type': 'application/x-www-form-urlencoded'}
@@ -383,19 +389,33 @@ class OverpassClient:
                 
                 data = response.json()
                 elements = data.get('elements', [])
+                slog.req_end(provider="overpass", op="batch_query", stage="geo", status="ok", request_token=token, http_status=response.status_code, meta={"elements": len(elements)})
                 break # Sukces
                 
             except (requests.RequestException, ValueError) as e:
-                print(f"WARN: Overpass request failed on {self._get_endpoint()}: {e}")
                 self._rotate_endpoint()
                 
                 if attempt < max_retries - 1:
                     # Exponential backoff: 1s, 2s, 4s + random jitter 0-500ms
                     backoff = (2 ** attempt) + random.uniform(0, 0.5)
-                    print(f"INFO: Retrying in {backoff:.1f}s (attempt {attempt+2}/{max_retries})...")
+                    slog.req_end(
+                        provider="overpass", op="batch_query", stage="geo",
+                        status="retry", request_token=token,
+                        error_class="http", retry_count=attempt + 1,
+                        http_status=getattr(getattr(e, 'response', None), 'status_code', None),
+                        message=f"Retrying in {backoff:.1f}s",
+                        exc=str(e),
+                    )
                     time.sleep(backoff)
                 else:
-                    print("ERROR: Wszystkie próby pobrania danych nie powiodły się.")
+                    slog.req_end(
+                        provider="overpass", op="batch_query", stage="geo",
+                        status="error", request_token=token,
+                        error_class="http", retry_count=attempt + 1,
+                        message="All retry attempts exhausted",
+                        exc=str(e),
+                        hint="All Overpass endpoints failed. Check network or try again later.",
+                    )
                     # Zwracamy puste wyniki (fail gracefully)
                     empty_metrics = NatureMetrics()
                     empty_metrics.calculate_density(radius_m)

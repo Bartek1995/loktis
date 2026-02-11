@@ -166,7 +166,7 @@ if not DEBUG:
     SESSION_COOKIE_SECURE = True
     CSRF_COOKIE_SECURE = True
 
-# Logging
+# Logging — structured key=value format for location_analysis pipeline
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,
@@ -175,11 +175,20 @@ LOGGING = {
             'format': '{levelname} {asctime} {module} {message}',
             'style': '{',
         },
+        'structured': {
+            # StructuredLogger already emits key=value lines; keep formatter minimal
+            'format': '{message}',
+            'style': '{',
+        },
     },
     'handlers': {
         'console': {
             'class': 'logging.StreamHandler',
             'formatter': 'verbose',
+        },
+        'structured_console': {
+            'class': 'logging.StreamHandler',
+            'formatter': 'structured',
         },
     },
     'root': {
@@ -193,8 +202,29 @@ LOGGING = {
             'propagate': False,
         },
         'location_analysis': {
-            'handlers': ['console'],
+            'handlers': ['structured_console'],
             'level': 'DEBUG' if DEBUG else 'INFO',
+            'propagate': False,
+        },
+        # Mute noisy third-party loggers
+        'urllib3': {
+            'handlers': ['console'],
+            'level': 'WARNING',
+            'propagate': False,
+        },
+        'requests': {
+            'handlers': ['console'],
+            'level': 'WARNING',
+            'propagate': False,
+        },
+        'httpcore': {
+            'handlers': ['console'],
+            'level': 'WARNING',
+            'propagate': False,
+        },
+        'google': {
+            'handlers': ['console'],
+            'level': 'WARNING',
             'propagate': False,
         },
     },

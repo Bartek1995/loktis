@@ -142,7 +142,8 @@ class GooglePlacesClient:
         self,
         lat: float,
         lon: float,
-        radius_m: int = 500
+        radius_m: int = 500,
+        trace_ctx: 'AnalysisTraceContext | None' = None,
     ) -> Tuple[Dict[str, List[POI]], Dict[str, Any]]:
         """
         Pobiera POI z Google Places API.
@@ -150,8 +151,12 @@ class GooglePlacesClient:
         Returns:
             tuple: (pois_by_category, metrics) - ten sam format co OverpassClient
         """
+        from ..diagnostics import get_diag_logger, AnalysisTraceContext
+        ctx = trace_ctx or AnalysisTraceContext()
+        slog = get_diag_logger(__name__, ctx)
+
         if not self.api_key:
-            logger.error("Google Places API key not configured")
+            slog.error(stage="geo", provider="google", op="get_pois_around", message="API key not configured", error_class="config")
             return self._empty_result()
         
         pois_by_category: Dict[str, List[POI]] = {
@@ -166,7 +171,7 @@ class GooglePlacesClient:
         for our_category, google_types in self.SEARCH_TYPES.items():
             for google_type in google_types:
                 try:
-                    results = self._search_nearby(lat, lon, radius_m, google_type)
+                    results = self._search_nearby(lat, lon, radius_m, google_type, trace_ctx=ctx)
                     
                     for place in results:
                         poi = self._create_poi_from_place(place, our_category, lat, lon)
@@ -178,7 +183,7 @@ class GooglePlacesClient:
                                 nature_metrics.add_park(poi.distance_m)
                                 
                 except Exception as e:
-                    logger.warning(f"Google Places search error for {google_type}: {e}")
+                    slog.warning(stage="geo", provider="google", op="search_nearby", message=str(e), error_class="runtime", meta={"google_type": google_type})
         
         # Deduplikacja i limitowanie
         for cat in pois_by_category:
@@ -218,9 +223,14 @@ class GooglePlacesClient:
         lat: float, 
         lon: float, 
         radius_m: int, 
-        place_type: str
+        place_type: str,
+        trace_ctx: 'AnalysisTraceContext | None' = None,
     ) -> List[dict]:
         """Wykonuje Nearby Search dla jednego typu."""
+        from ..diagnostics import get_diag_logger, AnalysisTraceContext
+        ctx = trace_ctx or AnalysisTraceContext()
+        slog = get_diag_logger(__name__, ctx)
+
         params = {
             'location': f"{lat},{lon}",
             'radius': radius_m,
@@ -228,18 +238,21 @@ class GooglePlacesClient:
             'key': self.api_key,
         }
         
-        logger.debug(f"Google Places search: {place_type} at ({lat}, {lon})")
+        token = slog.req_start(provider="google", op="search_nearby", stage="geo", meta={"type": place_type})
         
         response = requests.get(self.NEARBY_SEARCH_URL, params=params, timeout=10)
         response.raise_for_status()
         
         data = response.json()
+        api_status = data.get('status', '')
         
-        if data.get('status') not in ['OK', 'ZERO_RESULTS']:
-            logger.warning(f"Google Places API error: {data.get('status')} - {data.get('error_message', '')}")
+        if api_status not in ['OK', 'ZERO_RESULTS']:
+            slog.req_end(provider="google", op="search_nearby", stage="geo", status="error", request_token=token, http_status=response.status_code, provider_code=api_status, message=data.get('error_message', ''))
             return []
         
-        return data.get('results', [])
+        results = data.get('results', [])
+        slog.req_end(provider="google", op="search_nearby", stage="geo", status="ok", request_token=token, http_status=response.status_code, provider_code=api_status, meta={"results": len(results)})
+        return results
     
     def _create_poi_from_place(
         self,
@@ -296,7 +309,7 @@ class GooglePlacesClient:
                 badges=badges,
             )
         except Exception as e:
-            logger.warning(f"Error creating POI from Google place: {e}")
+            logger.warning("Error creating POI from Google place: %s", e)
             return None
     
     def _haversine_distance(
@@ -359,7 +372,7 @@ class GooglePlacesClient:
             return self._get_place_details(place_id, fields)
             
         except Exception as e:
-            logger.warning(f"find_place_details error for '{name}': {e}")
+            logger.warning("find_place_details error for '%s': %s", name, e)
             return None
     
     def _find_nearby_by_keyword(
@@ -367,12 +380,17 @@ class GooglePlacesClient:
         keyword: str, 
         lat: float, 
         lon: float, 
-        radius: int = 100
+        radius: int = 100,
+        trace_ctx: 'AnalysisTraceContext | None' = None,
     ) -> Optional[str]:
         """
         Szuka miejsca przez Nearby Search z keyword.
         Zwraca place_id najbliższego wyniku.
         """
+        from ..diagnostics import get_diag_logger, AnalysisTraceContext
+        ctx = trace_ctx or AnalysisTraceContext()
+        slog = get_diag_logger(__name__, ctx)
+
         params = {
             'location': f"{lat},{lon}",
             'radius': radius,
@@ -380,31 +398,43 @@ class GooglePlacesClient:
             'key': self.api_key,
         }
         
+        token = slog.req_start(provider="google", op="find_nearby_keyword", stage="geo", meta={"keyword": keyword})
         response = requests.get(self.NEARBY_SEARCH_URL, params=params, timeout=10)
         response.raise_for_status()
         data = response.json()
+        api_status = data.get('status', '')
         
-        if data.get('status') == 'OK' and data.get('results'):
-            # Zwróć najbliższy wynik (pierwszy z listy - API sortuje po relevance/distance)
-            return data['results'][0].get('place_id')
+        if api_status == 'OK' and data.get('results'):
+            place_id = data['results'][0].get('place_id')
+            slog.req_end(provider="google", op="find_nearby_keyword", stage="geo", status="ok", request_token=token, provider_code=api_status, meta={"place_id": place_id})
+            return place_id
         
+        slog.req_end(provider="google", op="find_nearby_keyword", stage="geo", status="ok", request_token=token, provider_code=api_status, meta={"results": 0})
         return None
     
-    def _get_place_details(self, place_id: str, fields: List[str]) -> Optional[dict]:
+    def _get_place_details(self, place_id: str, fields: List[str], trace_ctx: 'AnalysisTraceContext | None' = None) -> Optional[dict]:
         """Pobiera szczegóły miejsca z Place Details API."""
+        from ..diagnostics import get_diag_logger, AnalysisTraceContext
+        ctx = trace_ctx or AnalysisTraceContext()
+        slog = get_diag_logger(__name__, ctx)
+
         params = {
             'place_id': place_id,
             'fields': ','.join(fields),
             'key': self.api_key,
         }
         
+        token = slog.req_start(provider="google", op="place_details", stage="geo", meta={"place_id": place_id})
         response = requests.get(self.PLACE_DETAILS_URL, params=params, timeout=10)
         response.raise_for_status()
         data = response.json()
+        api_status = data.get('status', '')
         
-        if data.get('status') == 'OK' and data.get('result'):
+        if api_status == 'OK' and data.get('result'):
+            slog.req_end(provider="google", op="place_details", stage="geo", status="ok", request_token=token, provider_code=api_status)
             return data['result']
         
+        slog.req_end(provider="google", op="place_details", stage="geo", status="ok", request_token=token, provider_code=api_status, meta={"result": None})
         return None
     
     def _empty_result(self) -> Tuple[Dict[str, List[POI]], Dict[str, Any]]:

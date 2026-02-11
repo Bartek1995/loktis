@@ -97,11 +97,16 @@ def validate_category_membership(poi: "POI", category: str) -> bool:
 
 
 def filter_by_membership(
-    pois_by_category: Dict[str, List["POI"]]
+    pois_by_category: Dict[str, List["POI"]],
+    trace_ctx: 'AnalysisTraceContext | None' = None,
 ) -> Dict[str, List["POI"]]:
     """
     Filtruje POI - zostawia tylko te które rzeczywiście pasują do kategorii.
     """
+    from ..diagnostics import get_diag_logger, AnalysisTraceContext
+    ctx = trace_ctx or AnalysisTraceContext()
+    slog = get_diag_logger(__name__, ctx)
+
     result: Dict[str, List["POI"]] = {}
     
     for category, pois in pois_by_category.items():
@@ -113,15 +118,12 @@ def filter_by_membership(
                 valid.append(poi)
             else:
                 invalid_count += 1
-                logger.debug(
-                    f"Rejecting '{poi.name}' from {category}: "
-                    f"tags={poi.tags.get('amenity', '')}|{poi.tags.get('shop', '')} "
-                    f"types={poi.tags.get('types', [])}"
-                )
         
         if invalid_count > 0:
-            logger.info(
-                f"filter_by_membership: {category} rejected {invalid_count}/{len(pois)} POIs"
+            slog.checkpoint(
+                stage="filter", category=category,
+                count_raw=len(pois), count_kept=len(valid),
+                provider="membership", op="filter_membership",
             )
         
         result[category] = valid
@@ -132,7 +134,8 @@ def filter_by_membership(
 def filter_by_radius(
     pois_by_category: Dict[str, List["POI"]],
     radius_by_category: Dict[str, int],
-    default_radius: int = 500
+    default_radius: int = 500,
+    trace_ctx: 'AnalysisTraceContext | None' = None,
 ) -> Dict[str, List["POI"]]:
     """
     Filtruje POI - zostawia tylko te w promieniu danej kategorii.
@@ -145,6 +148,10 @@ def filter_by_radius(
     Returns:
         Przefiltrowany słownik POI
     """
+    from ..diagnostics import get_diag_logger, AnalysisTraceContext
+    ctx = trace_ctx or AnalysisTraceContext()
+    slog = get_diag_logger(__name__, ctx)
+
     result: Dict[str, List["POI"]] = {}
     
     for category, pois in pois_by_category.items():
@@ -152,9 +159,11 @@ def filter_by_radius(
         filtered = [p for p in pois if p.distance_m <= max_distance]
         
         if len(filtered) < len(pois):
-            logger.debug(
-                f"filter_by_radius: {category} kept {len(filtered)}/{len(pois)} "
-                f"(max {max_distance}m)"
+            slog.checkpoint(
+                stage="filter", category=category,
+                count_raw=len(pois), count_kept=len(filtered),
+                provider="radius", op="filter_radius",
+                meta={"max_distance": max_distance},
             )
         
         result[category] = filtered

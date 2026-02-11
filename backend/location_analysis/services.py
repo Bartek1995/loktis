@@ -17,6 +17,7 @@ from .scoring.profile_engine import create_scoring_engine
 from .ai_insights import generate_decision_insights, generate_insights_from_factsheet
 from .analysis_factsheet import build_factsheet_from_scoring
 from .data_quality import build_data_quality_report
+from .diagnostics import AnalysisTraceContext, get_diag_logger
 
 logger = logging.getLogger(__name__)
 
@@ -62,10 +63,15 @@ class AnalysisService:
         """
         import json
         
+        ctx = AnalysisTraceContext()
+        slog = get_diag_logger(__name__, ctx)
+        slog.info(stage="init", op="analyze_stream", message="Start URL analysis", meta={"url": url, "radius": radius})
+        
         # Walidacja URL
         yield json.dumps({'status': 'validating', 'message': 'Walidacja URL...'}) + '\n'
         is_valid, error = ProviderRegistry.validate_url(url)
         if not is_valid:
+            slog.warning(stage="init", op="validate_url", status="invalid", message=error or "Invalid URL")
             yield json.dumps({'status': 'error', 'error': error}) + '\n'
             return
         
@@ -74,13 +80,16 @@ class AnalysisService:
             cache_key = TTLCache.make_key('report', url, radius)
             cached_report = listing_cache.get(cache_key)
             if cached_report:
+                 slog.info(stage="init", op="cache_hit", message="Report served from cache")
                  yield json.dumps({'status': 'complete', 'result': cached_report}) + '\n'
                  return
 
         try:
             # 1. Parsuj
+            ctx.start_stage("parsing")
             yield json.dumps({'status': 'parsing', 'message': 'Pobieranie ogłoszenia...'}) + '\n'
             listing = self._parse_listing(url, use_cache)
+            ctx.end_stage("parsing")
             if listing.errors:
                  # Jeśli błędy krytyczne parsowania
                  pass
@@ -92,6 +101,7 @@ class AnalysisService:
             
             if listing.has_precise_location and listing.latitude and listing.longitude:
                 try:
+                    ctx.start_stage("geo")
                     yield json.dumps({'status': 'map', 'message': f'Analiza mapy (promień {radius}m)...'}) + '\n'
                     pois, metrics = self._get_pois(
                         listing.latitude,
@@ -99,18 +109,25 @@ class AnalysisService:
                         radius,
                         use_cache
                     )
+                    dur = ctx.end_stage("geo")
+                    slog.info(stage="geo", op="get_pois", duration_ms=dur)
                     
+                    ctx.start_stage("scoring")
                     yield json.dumps({'status': 'calculating', 'message': 'Obliczanie wyników...'}) + '\n'
                     neighborhood_score = self.poi_analyzer.analyze(pois, metrics)
                     poi_stats = self.poi_analyzer.get_statistics(pois)
+                    dur = ctx.end_stage("scoring")
+                    slog.info(stage="scoring", op="analyze", duration_ms=dur)
                     
                 except Exception as e:
-                    logger.warning(f"Błąd analizy okolicy: {e}")
+                    slog.error(stage="geo", op="neighborhood", message=str(e), error_class="runtime")
                     listing.errors.append("Nie udało się przeanalizować okolicy.")
             else:
+                 slog.info(stage="geo", op="skip", message="No precise location")
                  yield json.dumps({'status': 'info', 'message': 'Brak dokładnej lokalizacji - pomijam mapę.'}) + '\n'
 
             # 3. Buduj raport
+            ctx.start_stage("report")
             yield json.dumps({'status': 'generating', 'message': 'Generowanie raportu końcowego...'}) + '\n'
             report = self.report_builder.build(
                 property_input=listing,
@@ -118,17 +135,22 @@ class AnalysisService:
                 poi_stats=poi_stats,
                 all_pois=pois
             )
+            ctx.end_stage("report")
             
             # 4. Save & Cache
+            ctx.start_stage("save")
             self._save_to_db(url, listing, report)
             result = report.to_dict()
             if use_cache:
                 listing_cache.set(TTLCache.make_key('report', url, radius), result, ttl=3600)
+            ctx.end_stage("save")
             
+            ctx.summary.emit(slog, ctx, status="ok")
             yield json.dumps({'status': 'complete', 'result': result}) + '\n'
             
         except Exception as e:
-            logger.exception(f"Błąd analizy dla {url}")
+            slog.error(stage="pipeline", op="analyze_stream", message=str(e), exc=type(e).__name__, error_class="runtime", hint="Check traceback in Django logs")
+            ctx.summary.emit(slog, ctx, status="error")
             yield json.dumps({'status': 'error', 'error': str(e)}) + '\n'
     
     # Alias for backwards compatibility
@@ -164,9 +186,18 @@ class AnalysisService:
         """
         import json
         
+        ctx = AnalysisTraceContext()
+        slog = get_diag_logger(__name__, ctx)
+        
         try:
             # Mapowanie legacy user_profile -> profile_key
             effective_profile_key = profile_key or user_profile
+            
+            slog.info(
+                stage="init", op="analyze_location_stream",
+                message="Start location analysis",
+                meta={"lat": lat, "lon": lon, "radius": radius, "profile": effective_profile_key, "poi_provider": poi_provider},
+            )
             
             # Pobierz nowy profil konfiguracyjny
             profile = get_profile(effective_profile_key)
@@ -177,7 +208,7 @@ class AnalysisService:
                 for category, override_radius in radius_overrides.items():
                     if category in effective_radius_m:
                         effective_radius_m[category] = override_radius
-                        logger.info(f"Radius override: {category} = {override_radius}m (was {profile.radius_m.get(category)}m)")
+                        slog.debug(stage="init", op="radius_override", meta={"category": category, "new": override_radius, "was": profile.radius_m.get(category)})
 
             # Ustal promien pobierania POI = max promien per kategoria (including overrides)
             profile_radius_max = max(effective_radius_m.values()) if effective_radius_m else radius
@@ -220,31 +251,24 @@ class AnalysisService:
             ai_insights = None
             
             try:
+                ctx.start_stage("geo")
                 provider_label = 'Google Places' if poi_provider == 'google' else ('Hybrid' if poi_provider == 'hybrid' else 'Overpass')
                 yield json.dumps({'status': 'map', 'message': f'Analiza mapy ({provider_label}, promień {fetch_radius}m)...'}) + '\n'
                 pois, metrics, poi_cache_used = self._get_pois(
                     lat, lon, fetch_radius, 
                     use_cache=True, 
                     provider=poi_provider,
-                    radius_by_category=effective_radius_m  # Pass per-category radius!
+                    radius_by_category=effective_radius_m,  # Pass per-category radius!
+                    trace_ctx=ctx,
                 )
-                logger.info(f"POI fetch: cache_used={poi_cache_used}, provider={poi_provider}")
+                geo_dur = ctx.end_stage("geo")
+                slog.info(stage="geo", op="get_pois", provider=poi_provider, duration_ms=geo_dur, meta={"cache_used": poi_cache_used})
 
                 # Debug: zrzut wykrytych POI (top 10 per kategoria)
-                if logger.isEnabledFor(logging.DEBUG):
-                    poi_debug = {}
+                if logging.getLogger(__name__).isEnabledFor(logging.DEBUG):
                     for cat, items in (pois or {}).items():
-                        if not items:
-                            continue
-                        poi_debug[cat] = [
-                            {
-                                'name': p.name,
-                                'distance_m': p.distance_m,
-                                'subcategory': p.subcategory,
-                            }
-                            for p in items[:10]
-                        ]
-                    logger.debug(f"Detected POIs (top10): {poi_debug}")
+                        if items:
+                            slog.debug(stage="geo", op="poi_dump", meta={"category": cat, "count": len(items), "top3": [p.name for p in items[:3]]})
                 
                 # Build DataQualityReport for debugging and UI
                 data_quality = build_data_quality_report(
@@ -257,11 +281,14 @@ class AnalysisService:
                     cache_used=poi_cache_used,
                 )
                 
+                ctx.start_stage("scoring")
                 yield json.dumps({'status': 'calculating', 'message': 'Obliczanie scoringu bazowego...'}) + '\n'
                 
                 # 1. Standardowa analiza POI (surowe score'y) - dla kompatybilności
                 neighborhood_score = self.poi_analyzer.analyze(pois, metrics)
                 poi_stats = self.poi_analyzer.get_statistics(pois)
+                scoring_dur = ctx.end_stage("scoring")
+                slog.info(stage="scoring", op="base_scoring", duration_ms=scoring_dur)
                 
                 yield json.dumps({
                     'status': 'profile', 
@@ -269,6 +296,7 @@ class AnalysisService:
                 }) + '\n'
                 
                 # 2. NOWY: Profile-based scoring z krzywymi spadku
+                ctx.start_stage("profile_scoring")
                 profile_engine = create_scoring_engine(effective_profile_key, radius_overrides)
                 profile_scoring_result = profile_engine.calculate(
                     pois_by_category=pois,
@@ -276,18 +304,21 @@ class AnalysisService:
                     nature_metrics=metrics.get('nature'),
                     base_neighborhood_score=neighborhood_score.total_score,
                 )
+                ctx.end_stage("profile_scoring")
                 
                 # 3. Generuj werdykt decyzyjny (używamy nowego profilu)
+                ctx.start_stage("verdict")
                 verdict_generator = ProfileVerdictGenerator()
                 verdict = verdict_generator.generate(profile_scoring_result, profile)
+                verdict_dur = ctx.end_stage("verdict")
                 
-                logger.info(
-                    f"Scoring dla ({lat}, {lon}) profile={effective_profile_key}: "
-                    f"score={profile_scoring_result.total_score:.1f}, "
-                    f"verdict={verdict.level.value}"
+                slog.info(
+                    stage="verdict", op="profile_verdict", duration_ms=verdict_dur,
+                    meta={"score": round(profile_scoring_result.total_score, 1), "verdict": verdict.level.value, "profile": effective_profile_key},
                 )
                 
                 # 4. NOWE: Generuj AI insights (Single Source of Truth architecture)
+                ctx.start_stage("ai")
                 yield json.dumps({'status': 'ai', 'message': 'Generowanie opisów AI...'}) + '\n'
                 try:
                     # Build canonical factsheet - the ONLY input AI receives
@@ -303,22 +334,21 @@ class AnalysisService:
                     
                     # Generate AI insights from factsheet (not raw data)
                     ai_insights = generate_insights_from_factsheet(factsheet)
+                    ai_dur = ctx.end_stage("ai")
                     
                     if ai_insights:
-                        logger.info(f"AI insights generated: {ai_insights.summary[:50]}...")
+                        slog.info(stage="ai", op="insights_generated", duration_ms=ai_dur, meta={"summary_len": len(ai_insights.summary)})
                 except Exception as ai_error:
-                    logger.warning(f"AI insights generation failed: {ai_error}")
-                    import traceback
-                    traceback.print_exc()
+                    ctx.end_stage("ai")
+                    slog.warning(stage="ai", op="insights_failed", message=str(ai_error), error_class="runtime")
                     ai_insights = None
                 
             except Exception as e:
-                logger.warning(f"Błąd analizy okolicy: {e}")
-                import traceback
-                traceback.print_exc()
+                slog.error(stage="geo", op="neighborhood", message=str(e), exc=type(e).__name__, error_class="runtime", hint="POI fetch or scoring failed")
                 listing.errors.append("Nie udało się przeanalizować okolicy.")
             
             # Buduj raport
+            ctx.start_stage("report")
             yield json.dumps({'status': 'generating', 'message': 'Generowanie raportu końcowego...'}) + '\n'
             report = self.report_builder.build(
                 property_input=listing,
@@ -326,6 +356,7 @@ class AnalysisService:
                 poi_stats=poi_stats,
                 all_pois=pois
             )
+            ctx.end_stage("report")
             
             # Dodaj parametry generowania raportu
             from datetime import datetime
@@ -346,6 +377,7 @@ class AnalysisService:
             }
             
             # Zapisz do bazy i pobierz public_id
+            ctx.start_stage("save")
             saved_analysis = self._save_location_to_db(
                 lat=lat,
                 lon=lon,
@@ -360,6 +392,7 @@ class AnalysisService:
                 ai_insights=ai_insights,
             )
             
+            ctx.end_stage("save")
             result = report.to_dict()
             
             # Dodaj public_id do wyniku
@@ -383,10 +416,12 @@ class AnalysisService:
                     'verification_checklist': ai_insights.verification_checklist,
                 }
             
+            ctx.summary.emit(slog, ctx, status="ok", extra_meta={"profile": effective_profile_key, "public_id": getattr(saved_analysis, 'public_id', None)})
             yield json.dumps({'status': 'complete', 'result': result}) + '\n'
             
         except Exception as e:
-            logger.exception(f"Błąd analizy lokalizacji ({lat}, {lon})")
+            slog.error(stage="pipeline", op="analyze_location_stream", message=str(e), exc=type(e).__name__, error_class="runtime", hint="Check traceback in Django logs")
+            ctx.summary.emit(slog, ctx, status="error")
             yield json.dumps({'status': 'error', 'error': str(e)}) + '\n'
     
     def _parse_listing(self, url: str, use_cache: bool) -> PropertyData:
@@ -396,7 +431,7 @@ class AnalysisService:
         if use_cache:
             cached = listing_cache.get(cache_key)
             if cached:
-                logger.info(f"Listing z cache: {url}")
+                logger.debug("Listing cache hit: %s", url)
                 return cached
         
         provider = get_provider_for_url(url)
@@ -405,7 +440,7 @@ class AnalysisService:
             listing.errors.append("Brak providera dla tej domeny.")
             return listing
         
-        logger.info(f"Parsowanie {url} przez {provider.name}")
+        logger.debug("Parsing %s via %s", url, provider.name)
         listing = provider.parse(url)
         
         if use_cache and not listing.errors:
@@ -420,7 +455,8 @@ class AnalysisService:
         radius: int,
         use_cache: bool,
         provider: str = 'hybrid',
-        radius_by_category: Dict[str, int] = None  # NEW: per-category radius
+        radius_by_category: Dict[str, int] = None,  # NEW: per-category radius
+        trace_ctx: 'AnalysisTraceContext | None' = None,
     ) -> tuple:
         """
         Pobiera POI i metryki (z cache jeśli dostępne).
@@ -428,6 +464,7 @@ class AnalysisService:
         Args:
             provider: 'overpass', 'google', lub 'hybrid' (domyślny)
             radius_by_category: Per-category radius limits for filtering
+            trace_ctx: Optional trace context for structured logging
         
         Returns:
             tuple: (pois_by_category, metrics)
@@ -446,22 +483,20 @@ class AnalysisService:
         if use_cache:
             cached = overpass_cache.get(cache_key)
             if cached:
-                logger.info(f"POI z cache ({provider}): ({norm_lat}, {norm_lon}) r={radius}")
+                logger.debug("POI cache hit (%s): (%s, %s) r=%s", provider, norm_lat, norm_lon, radius)
                 return cached[0], cached[1], True  # pois, metrics, cache_used=True
         
         # Wybór klienta
         if provider == 'hybrid':
-            logger.info(f"Pobieranie POI HYBRID (Overpass + Google enrichment): ({lat}, {lon}) r={radius}")
             pois, metrics = self.hybrid_provider.get_pois_hybrid(
                 lat, lon, radius,
-                radius_by_category=radius_by_category  # Pass per-category radius!
+                radius_by_category=radius_by_category,  # Pass per-category radius!
+                trace_ctx=trace_ctx,
             )
         elif provider == 'google':
-            logger.info(f"Pobieranie POI z Google Places: ({lat}, {lon}) r={radius}")
-            pois, metrics = self.google_places_client.get_pois_around(lat, lon, radius)
+            pois, metrics = self.google_places_client.get_pois_around(lat, lon, radius, trace_ctx=trace_ctx)
         else:
-            logger.info(f"Pobieranie POI z Overpass: ({lat}, {lon}) r={radius}")
-            pois, metrics = self.overpass_client.get_pois_around(lat, lon, radius)
+            pois, metrics = self.overpass_client.get_pois_around(lat, lon, radius, trace_ctx=trace_ctx)
             # Apply filter for non-hybrid providers too
             if radius_by_category:
                 from .geo.poi_filter import filter_by_radius
@@ -511,7 +546,7 @@ class AnalysisService:
             return result
             
         except Exception as e:
-            logger.warning(f"Nie udało się zapisać do bazy: {e}")
+            logger.warning("DB save failed: %s", e)
             return None
     
     def _save_location_to_db(
@@ -607,13 +642,11 @@ class AnalysisService:
                 result.report_data = report_dict
                 result.save(update_fields=['report_data'])
             
-            logger.info(f"Zapisano analizę lokalizacji: {result.public_id} [profil: {profile_key or user_profile}]")
+            logger.debug("Saved analysis: %s [profile: %s]", result.public_id, profile_key or user_profile)
             return result
             
         except Exception as e:
-            logger.warning(f"Nie udało się zapisać do bazy: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.warning("DB save (location) failed: %s", e)
             return None
     
     def _error_response(self, message: str) -> Dict[str, Any]:

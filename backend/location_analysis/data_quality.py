@@ -87,29 +87,46 @@ class DataQualityReport:
         """Returns True if there are actual data quality problems (not just empty signal)."""
         return len(self.error_categories) > 0 or self.overpass_status == "error"
     
-    def log_summary(self):
-        """Log INFO-level summary."""
+    def log_summary(self, trace_ctx: 'AnalysisTraceContext | None' = None):
+        """Log INFO-level summary using structured logging."""
+        from .diagnostics import get_diag_logger, AnalysisTraceContext
+        ctx = trace_ctx or AnalysisTraceContext()
+        slog = get_diag_logger(__name__, ctx)
+
         categories_empty = [k for k, v in self.coverage.items() if v.status == "empty"]
         categories_error = [k for k, v in self.coverage.items() if v.status == "error"]
         
-        logger.info(
-            f"[COVERAGE] confidence={self.confidence_pct}% "
-            f"overpass={self.overpass_status} "
-            f"cache={self.cache_used} "
-            f"fallback_started={self.fallback_started} "
-            f"fallback_contributed={self.fallback_contributed} "
-            f"empty={categories_empty} "
-            f"errors={categories_error}"
+        slog.info(
+            stage="data_quality", op="coverage_summary",
+            meta={
+                "confidence": self.confidence_pct,
+                "overpass_status": self.overpass_status,
+                "cache_used": self.cache_used,
+                "fallback_started": self.fallback_started,
+                "fallback_contributed": self.fallback_contributed,
+                "empty_categories": categories_empty,
+                "error_categories": categories_error,
+            },
         )
     
-    def log_debug(self):
-        """Log DEBUG-level per-category breakdown."""
+    def log_debug(self, trace_ctx: 'AnalysisTraceContext | None' = None):
+        """Log DEBUG-level per-category breakdown using structured logging."""
+        from .diagnostics import get_diag_logger, AnalysisTraceContext
+        ctx = trace_ctx or AnalysisTraceContext()
+        slog = get_diag_logger(__name__, ctx)
+
         for cat, cov in self.coverage.items():
-            reject_str = " ".join(f"{k}={v}" for k, v in cov.rejects.items()) if cov.rejects else "-"
-            logger.debug(
-                f"[COVERAGE:{cat}] source={cov.source} status={cov.status} "
-                f"raw={cov.raw_count} kept={cov.kept_count} radius={cov.radius_m}m "
-                f"rejects: {reject_str}"
+            slog.debug(
+                stage="data_quality", op="coverage_detail",
+                meta={
+                    "category": cat,
+                    "source": cov.source,
+                    "status": cov.status,
+                    "raw": cov.raw_count,
+                    "kept": cov.kept_count,
+                    "radius": cov.radius_m,
+                    "rejects": cov.rejects or {},
+                },
             )
 
 

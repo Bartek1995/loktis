@@ -106,7 +106,8 @@ class HybridPOIProvider:
         radius_m: int = 500,
         radius_by_category: Optional[Dict[str, int]] = None,
         enable_enrichment: bool = True,
-        enable_fallback: bool = True
+        enable_fallback: bool = True,
+        trace_ctx: 'AnalysisTraceContext | None' = None,
     ) -> Tuple[Dict[str, List[POI]], Dict[str, Any]]:
         """
         Pobiera POI używając strategii 3-warstwowej.
@@ -114,43 +115,48 @@ class HybridPOIProvider:
         Args:
             radius_m: Globalny promień pobierania (max)
             radius_by_category: Per-category radius limits (for filtering/fallback)
+            trace_ctx: Optional trace context for structured logging
         
         Returns:
             tuple: (pois_by_category, metrics)
         """
         from .poi_filter import filter_by_radius, filter_by_membership
+        from ..diagnostics import get_diag_logger, AnalysisTraceContext
+        ctx = trace_ctx or AnalysisTraceContext()
+        slog = get_diag_logger(__name__, ctx)
         
         # Domyślny radius_by_category = globalny promień dla wszystkich
         effective_radius = radius_by_category or {}
         
         # === WARSTWA 1: Overpass jako base ===
-        logger.info(f"Hybrid: Layer 1 - Overpass base ({lat}, {lon}) r={radius_m}")
-        pois, metrics = self.overpass.get_pois_around(lat, lon, radius_m)
+        slog.info(stage="geo", provider="overpass", op="layer1_base", message="Overpass base fetch", meta={"radius": radius_m})
+        pois, metrics = self.overpass.get_pois_around(lat, lon, radius_m, trace_ctx=ctx)
         
         # Filtruj POI per-kategoria PRZED liczeniem coverage
         if effective_radius:
             pois = filter_by_radius(pois, effective_radius, default_radius=radius_m)
         
-        # Policz coverage per kategoria (po filtrze!)
+        # Policz coverage per kategoria (po filtrze!) + checkpoint
         coverage = {cat: len(items) for cat, items in pois.items()}
-        logger.debug(f"Hybrid: Overpass coverage (after filter): {coverage}")
+        for cat, items in pois.items():
+            slog.checkpoint(stage="geo", category=cat, count_raw=coverage.get(cat, 0), count_kept=len(items), provider="overpass")
         
         # === WARSTWA 3: Fallback dla brakujących kategorii ===
         # (Robimy przed enrichment żeby mieć pełną listę do wzbogacenia)
         if enable_fallback:
             missing_categories = self._find_missing_categories(coverage)
             if missing_categories:
-                logger.info(f"Hybrid: Layer 3 - Fallback for: {missing_categories}")
-                self._apply_fallback(pois, lat, lon, effective_radius, radius_m, missing_categories)
+                slog.degraded(kind="FALLBACK_USED", provider="google", reason=f"Missing categories: {missing_categories}", stage="geo", impact="supplementing with Google data")
+                self._apply_fallback(pois, lat, lon, effective_radius, radius_m, missing_categories, trace_ctx=ctx)
                 # Re-filter after fallback (fallback already uses category radius)
                 if effective_radius:
                     pois = filter_by_radius(pois, effective_radius, default_radius=radius_m)
         
         # === WARSTWA 2: Google enrichment dla top-k ===
         if enable_enrichment and self.google.api_key:
-            logger.info(f"Hybrid: Layer 2 - Enrichment for top-k POIs")
-            enriched_count = self._enrich_top_k(pois, lat, lon)
-            logger.info(f"Hybrid: Enriched {enriched_count} POIs with ratings")
+            slog.info(stage="geo", provider="google", op="layer2_enrichment", message="Enriching top-k POIs")
+            enriched_count = self._enrich_top_k(pois, lat, lon, trace_ctx=ctx)
+            slog.info(stage="geo", provider="google", op="enrichment_done", meta={"enriched_count": enriched_count})
 
         # Final dedup po enrichment/fallback
         self._dedupe_pois(pois)
@@ -166,7 +172,9 @@ class HybridPOIProvider:
         if effective_radius:
             pois = filter_by_radius(pois, effective_radius, default_radius=radius_m)
         
-        logger.info(f"Hybrid: Final POI counts: {{{', '.join(f'{k}: {len(v)}' for k, v in pois.items())}}}")
+        # Final checkpoint per category
+        for cat, items in pois.items():
+            slog.checkpoint(stage="geo", category=cat, count_raw=coverage.get(cat, 0), count_kept=len(items), provider="hybrid", op="final_counts")
         
         return pois, metrics
     
@@ -187,14 +195,19 @@ class HybridPOIProvider:
         lon: float,
         radius_by_category: Dict[str, int],
         default_radius: int,
-        categories: List[str]
+        categories: List[str],
+        trace_ctx: 'AnalysisTraceContext | None' = None,
     ) -> None:
         """
         Uzupełnia brakujące kategorie przez Google Nearby Search.
         Używa per-category radius!
         """
+        from ..diagnostics import get_diag_logger, AnalysisTraceContext
+        ctx = trace_ctx or AnalysisTraceContext()
+        slog = get_diag_logger(__name__, ctx)
+
         if not self.google.api_key:
-            logger.warning("Hybrid: Google API key not configured, skipping fallback")
+            slog.degraded(kind="DEGRADED_PROVIDER", provider="google", reason="API key not configured, skipping fallback", stage="geo")
             return
         
         from ..cache import google_nearby_cache, TTLCache, normalize_coords
@@ -210,7 +223,7 @@ class HybridPOIProvider:
 
             # USE CATEGORY-SPECIFIC RADIUS!
             cat_radius = radius_by_category.get(category, default_radius)
-            logger.debug(f"Hybrid: Fallback search for {category}: {types} (radius={cat_radius}m)")
+            slog.debug(stage="geo", provider="google", op="fallback_search", meta={"category": category, "types": types, "radius": cat_radius})
 
             for gtype in types:
                 try:
@@ -220,7 +233,7 @@ class HybridPOIProvider:
                     if cached is not None:
                         results = cached
                     else:
-                        results = self.google._search_nearby(lat, lon, cat_radius, gtype)
+                        results = self.google._search_nearby(lat, lon, cat_radius, gtype, trace_ctx=ctx)
                         google_nearby_cache.set(cache_key, results)
 
                     for place in results[:5]:  # Max 5 per type
@@ -228,14 +241,13 @@ class HybridPOIProvider:
                         if poi and not self._is_duplicate(poi, pois[category]):
                             # Skip if outside category radius
                             if poi.distance_m > cat_radius:
-                                logger.debug(f"Fallback: skipping {poi.name} ({poi.distance_m:.0f}m > {cat_radius}m)")
                                 continue
                             poi.tags['source'] = 'google_fallback'
                             poi.source = 'google_fallback'
                             pois[category].append(poi)
                             
                 except Exception as e:
-                    logger.warning(f"Hybrid: Fallback error for {gtype}: {e}")
+                    slog.warning(stage="geo", provider="google", op="fallback_error", message=str(e), error_class="runtime", meta={"google_type": gtype})
             
             # Sortuj po dystansie
             pois[category].sort(key=lambda p: p.distance_m)
@@ -244,7 +256,8 @@ class HybridPOIProvider:
         self,
         pois: Dict[str, List[POI]],
         lat: float,
-        lon: float
+        lon: float,
+        trace_ctx: 'AnalysisTraceContext | None' = None,
     ) -> int:
         """
         Wzbogaca top-k POI per kategoria o rating i reviews z Google.
@@ -255,6 +268,9 @@ class HybridPOIProvider:
             int: Liczba wzbogaconych POI
         """
         from ..cache import google_details_cache, TTLCache
+        from ..diagnostics import get_diag_logger, AnalysisTraceContext
+        ctx = trace_ctx or AnalysisTraceContext()
+        slog = get_diag_logger(__name__, ctx)
         
         enriched_count = 0
         seen_place_ids = set()  # Deduplikacja w ramach jednej analizy
@@ -284,10 +300,10 @@ class HybridPOIProvider:
                         category_count <= GENERIC_FEW_ALTERNATIVES
                     )
                     if not should_try_anyway:
-                        logger.debug(f"Skipping generic name: {poi.name} (dist={poi.distance_m:.0f}m, alts={category_count})")
+                        slog.debug(stage="geo", provider="google", op="enrich_skip_generic", meta={"name": poi.name, "dist": poi.distance_m, "alts": category_count})
                         continue
                     else:
-                        logger.debug(f"Trying generic: {poi.name} (close + few alternatives)")
+                        slog.debug(stage="geo", provider="google", op="enrich_try_generic", meta={"name": poi.name})
                 
                 # Używamy per-category search radius
                 search_radius = config.search_radius_m
@@ -300,21 +316,21 @@ class HybridPOIProvider:
                     
                     # Sprawdź czy ten place_id już był wzbogacony w tej sesji
                     if existing_place_id and existing_place_id in seen_place_ids:
-                        logger.debug(f"Skipping already enriched place_id: {existing_place_id}")
+                        slog.debug(stage="geo", provider="google", op="enrich_skip_dup", meta={"place_id": existing_place_id})
                         continue
                     
                     # Sprawdź cache
                     if cache_key:
                         details = google_details_cache.get(cache_key)
                         if details:
-                            logger.debug(f"Cache hit for {poi.name}")
+                            slog.debug(stage="geo", provider="google", op="enrich_cache_hit", meta={"name": poi.name})
                     
                     # Jeśli nie w cache, pobierz z API
                     if details is None:
                         # OPTYMALIZACJA: jeśli mamy place_id, użyj tylko _get_place_details (1 req)
                         # zamiast find_place_details który robi nearby+details (2 req)
                         if existing_place_id:
-                            logger.debug(f"Direct details lookup for {poi.name} (place_id known)")
+                            slog.debug(stage="geo", provider="google", op="enrich_direct", meta={"name": poi.name})
                             details = self.google._get_place_details(
                                 existing_place_id, 
                                 ['rating', 'user_ratings_total', 'geometry', 'place_id', 'types']
@@ -363,15 +379,12 @@ class HybridPOIProvider:
                             )
                             # Używamy per-category max distance
                             if distance_to_google > config.max_distance_m:
-                                logger.debug(
-                                    f"Rejecting enrichment for {poi.name}: "
-                                    f"Google result {distance_to_google:.0f}m away (max {config.max_distance_m}m)"
-                                )
+                                slog.debug(stage="geo", provider="google", op="enrich_reject_distance", meta={"name": poi.name, "distance": round(distance_to_google), "max": config.max_distance_m})
                                 continue
                         
                         final_place_id = poi.tags.get('place_id') or details.get('place_id')
                         if final_place_id and final_place_id in seen_place_ids:
-                            logger.debug(f"Skipping duplicate place_id after lookup: {final_place_id}")
+                            slog.debug(stage="geo", provider="google", op="enrich_skip_dup_post", meta={"place_id": final_place_id})
                             continue
 
                         rating = details.get('rating')
@@ -412,12 +425,12 @@ class HybridPOIProvider:
                         poi.source = 'google_enriched'
 
                         logger.debug(
-                            f"Enriched: {poi.name} dist={poi.distance_m:.0f}m "
-                            f"place_id={final_place_id} rating={rating} reviews={reviews}"
+                            "Enriched: %s dist=%dm place_id=%s rating=%s reviews=%s",
+                            poi.name, int(poi.distance_m), final_place_id, rating, reviews
                         )
                         
                 except Exception as e:
-                    logger.warning(f"Hybrid: Enrichment error for {poi.name}: {e}")
+                    slog.warning(stage="geo", provider="google", op="enrichment_error", message=str(e), error_class="runtime", meta={"name": poi.name})
         
         return enriched_count
     

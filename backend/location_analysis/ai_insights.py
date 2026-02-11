@@ -155,17 +155,22 @@ class AIInsightGenerator:
     def generate_from_factsheet(
         self,
         factsheet: AnalysisFactSheet,
+        trace_ctx: 'AnalysisTraceContext | None' = None,
     ) -> Optional[DecisionInsight]:
         """
         Generate AI insights from AnalysisFactSheet with validation.
         
         Returns validated AI output or deterministic fallback.
         """
+        from .diagnostics import get_diag_logger, AnalysisTraceContext
+        ctx = trace_ctx or AnalysisTraceContext()
+        slog = get_diag_logger(__name__, ctx)
+
         # Always have fallback ready
         fallback = self._generate_fallback_tldr(factsheet)
         
         if not self.model:
-            logger.info("No AI model, using fallback TL;DR")
+            slog.degraded(kind="DEGRADED_PROVIDER", provider="gemini", reason="No AI model configured, using fallback", stage="ai")
             return fallback
         
         try:
@@ -178,7 +183,9 @@ Wygeneruj insights dla tego raportu lokalizacyjnego.
 DANE (to jest JEDYNE źródło prawdy - nie wymyślaj innych faktów):
 {json.dumps(prompt_data, ensure_ascii=False, indent=2)}
 """
+            token = slog.req_start(provider="gemini", op="generate_content", stage="ai")
             response = self.model.generate_content(prompt)
+            slog.req_end(provider="gemini", op="generate_content", stage="ai", status="ok", request_token=token)
             
             # Parse JSON response
             data = json.loads(response.text)
@@ -190,7 +197,7 @@ DANE (to jest JEDYNE źródło prawdy - nie wymyślaj innych faktów):
             # VALIDATE AI output
             validation_errors = self._validate_ai_output(data, factsheet)
             if validation_errors:
-                logger.warning(f"AI output validation failed: {validation_errors}. Using fallback.")
+                slog.warning(stage="ai", provider="gemini", op="validation", status="failed", error_class="logic", message="Using fallback", meta={"errors": validation_errors})
                 return fallback
             
             # Extract from new schema (tldr removed)
@@ -202,7 +209,7 @@ DANE (to jest JEDYNE źródło prawdy - nie wymyślaj innych faktów):
             )
             
         except Exception as e:
-            logger.error(f"Failed to generate AI insights: {e}. Using fallback.")
+            slog.error(stage="ai", provider="gemini", op="generate_content", message=str(e), exc=type(e).__name__, error_class="runtime", hint="Gemini API call failed, using deterministic fallback")
             return fallback
     
     def _validate_ai_output(self, data: dict, factsheet: AnalysisFactSheet) -> list[str]:
