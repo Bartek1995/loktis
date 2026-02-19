@@ -31,6 +31,14 @@ declare global {
   }
 }
 
+interface GoogleMarkerEntry {
+  marker: google.maps.marker.AdvancedMarkerElement;
+  category?: string;
+  name?: string;
+  subcategory?: string;
+  infoWindow?: google.maps.InfoWindow;
+}
+
 const router = useRouter();
 const route = useRoute();
 
@@ -51,9 +59,11 @@ const isLoading = ref(false);
 const error = ref('');
 const mapContainer = ref<HTMLElement | null>(null);
 const map = ref<L.Map | null>(null);
-const googleMap = ref<any>(null);
-const googleMarkers = ref<any[]>([]);
+const googleMap = ref<google.maps.Map | null>(null);
+const googleMarkers = ref<GoogleMarkerEntry[]>([]);
 const leafletPoiMarkers = ref<L.CircleMarker[]>([]);
+const googleMapId = import.meta.env.VITE_GOOGLE_MAPS_MAP_ID || 'DEMO_MAP_ID';
+let googleMapsLoadPromise: Promise<void> | null = null;
 
 // DEV mode toggle (persisted in localStorage via SettingsDrawer)
 const devMode = ref(false);
@@ -108,10 +118,10 @@ function updateLeafletMarkers() {
 
 // Update Google Maps markers visibility
 function updateGoogleMapMarkers() {
-  googleMarkers.value.forEach(marker => {
-    const category = marker._category;
+  googleMarkers.value.forEach((entry) => {
+    const category = entry.category;
     if (category && categoryVisibility.value[category] !== undefined) {
-      marker.setVisible(categoryVisibility.value[category]);
+      entry.marker.map = categoryVisibility.value[category] ? googleMap.value : null;
     }
   });
 }
@@ -668,10 +678,14 @@ function focusOnPoi(category: string, item: POIItem) {
     googleMap.value.panTo({ lat: marker.lat, lng: marker.lon });
     googleMap.value.setZoom(16);
     const gMarker = googleMarkers.value.find(
-      m => m._name === marker.name && m._subcategory === marker.subcategory
+      m => m.name === marker.name && m.subcategory === marker.subcategory
     );
-    if (gMarker && gMarker._infoWindow) {
-      gMarker._infoWindow.open(googleMap.value, gMarker);
+    if (gMarker?.infoWindow) {
+      gMarker.marker.map = googleMap.value;
+      gMarker.infoWindow.open({
+        map: googleMap.value,
+        anchor: gMarker.marker,
+      });
     }
   } else if (map.value) {
     map.value.setView([marker.lat, marker.lon], 16, { animate: true });
@@ -739,39 +753,44 @@ function getBadgeLabel(badge: string): string {
 
 // Load Google Maps API dynamically
 function loadGoogleMapsApi(): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (window.google?.maps) {
-      googleMapsLoaded.value = true;
-      resolve();
-      return;
-    }
-    
+  if (window.google?.maps) {
+    googleMapsLoaded.value = true;
+    return Promise.resolve();
+  }
+  if (googleMapsLoadPromise) {
+    return googleMapsLoadPromise;
+  }
+
+  googleMapsLoadPromise = new Promise((resolve, reject) => {
     const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
     if (!apiKey || apiKey === 'your_google_maps_api_key_here') {
       googleMapsError.value = 'Brak klucza Google Maps API. Dodaj VITE_GOOGLE_MAPS_API_KEY do pliku .env';
+      googleMapsLoadPromise = null;
       reject(new Error('Missing Google Maps API key'));
       return;
     }
-    
+
     const script = document.createElement('script');
-    script.src = `https://maps.googleapis.com/maps/api/js?key=${apiKey}`;
+    script.src = `https://maps.googleapis.com/maps/api/js?key=${apiKey}&loading=async&v=weekly&libraries=places,marker&language=pl&region=PL`;
     script.async = true;
     script.defer = true;
-    
+
     script.onload = () => {
       googleMapsLoaded.value = true;
       resolve();
     };
-    
+
     script.onerror = () => {
+      googleMapsLoadPromise = null;
       googleMapsError.value = 'Nie udało się załadować Google Maps API';
       reject(new Error('Failed to load Google Maps'));
     };
-    
+
     document.head.appendChild(script);
   });
-}
 
+  return googleMapsLoadPromise;
+}
 // Cleanup maps
 function cleanupMaps() {
   leafletPoiMarkers.value.forEach(marker => marker.remove());
@@ -782,7 +801,10 @@ function cleanupMaps() {
     map.value = null;
   }
   
-  googleMarkers.value.forEach(marker => marker.setMap(null));
+  googleMarkers.value.forEach((entry) => {
+    entry.infoWindow?.close();
+    entry.marker.map = null;
+  });
   googleMarkers.value = [];
   googleMap.value = null;
 }
@@ -839,74 +861,106 @@ function initLeafletMap() {
 // Initialize Google Maps
 async function initGoogleMap() {
   if (!report.value?.listing.latitude || !report.value?.listing.longitude || !mapContainer.value) return;
-  
+
   try {
     await loadGoogleMapsApi();
-  } catch (e) {
+    if (typeof window.google?.maps?.importLibrary === 'function') {
+      await Promise.all([
+        window.google.maps.importLibrary('maps'),
+        window.google.maps.importLibrary('marker'),
+      ]);
+    }
+  } catch {
     return;
   }
-  
+
   cleanupMaps();
-  
+
+  const markerApi = window.google.maps.marker;
+  const AdvancedMarkerElement = markerApi?.AdvancedMarkerElement;
+  if (!AdvancedMarkerElement) {
+    googleMapsError.value = 'Biblioteka markerów Google Maps nie jest dostępna';
+    return;
+  }
+
   const lat = report.value.listing.latitude;
   const lon = report.value.listing.longitude;
-  
+
   googleMap.value = new window.google.maps.Map(mapContainer.value, {
     center: { lat, lng: lon },
     zoom: 15,
     mapTypeId: 'roadmap',
+    mapId: googleMapId,
   });
-  
-  const mainMarker = new window.google.maps.Marker({
+
+  const mainPin = markerApi?.PinElement
+    ? new markerApi.PinElement({ background: '#2563EB', borderColor: '#ffffff', glyphColor: '#ffffff' })
+    : null;
+
+  const mainMarker = new AdvancedMarkerElement({
     position: { lat, lng: lon },
     map: googleMap.value,
     title: report.value.listing.title || 'Nieruchomość',
+    gmpClickable: true,
+    ...(mainPin ? { content: mainPin.element } : {}),
   });
-  
+
   const infoWindow = new window.google.maps.InfoWindow({
     content: `<b>${report.value.listing.title || 'Nieruchomość'}</b>`,
   });
-  infoWindow.open(googleMap.value, mainMarker);
-  googleMarkers.value.push(mainMarker);
-  
+  infoWindow.open({
+    map: googleMap.value,
+    anchor: mainMarker,
+  });
+
+  googleMarkers.value.push({
+    marker: mainMarker,
+    infoWindow,
+  });
+
   if (report.value.neighborhood.markers) {
-    report.value.neighborhood.markers.forEach(poi => {
-      const color = poi.color || 'blue';
+    report.value.neighborhood.markers.forEach((poi) => {
+      const color = poi.color || '#3B82F6';
       const isVisible = categoryVisibility.value[poi.category] !== false;
-      
-      const marker = new window.google.maps.Marker({
+
+      const poiPin = markerApi?.PinElement
+        ? new markerApi.PinElement({
+            background: color,
+            borderColor: '#ffffff',
+            glyphColor: '#ffffff',
+            scale: 0.85,
+          })
+        : null;
+
+      const poiMarker = new AdvancedMarkerElement({
         position: { lat: poi.lat, lng: poi.lon },
-        map: googleMap.value,
-        visible: isVisible,
-        icon: {
-          path: window.google.maps.SymbolPath.CIRCLE,
-          scale: 8,
-          fillColor: color,
-          fillOpacity: 0.8,
-          strokeColor: '#fff',
-          strokeWeight: 1,
-        },
+        map: isVisible ? googleMap.value : null,
+        title: poi.name,
+        gmpClickable: true,
+        ...(poiPin ? { content: poiPin.element } : {}),
       });
-      
-      marker._category = poi.category;
-      marker._name = poi.name;
-      marker._subcategory = poi.subcategory;
-      marker._infoWindow = null;
-      
+
       const poiInfoWindow = new window.google.maps.InfoWindow({
         content: `<b>${poi.name}</b><br><span style="font-size: 12px; color: #666;">${poi.subcategory} (${Math.round(poi.distance || 0)}m)</span>`,
       });
-      marker._infoWindow = poiInfoWindow;
-      
-      marker.addListener('click', () => {
-        poiInfoWindow.open(googleMap.value, marker);
+
+      poiMarker.addListener('click', () => {
+        poiInfoWindow.open({
+          map: googleMap.value,
+          anchor: poiMarker,
+        });
       });
-      
-      googleMarkers.value.push(marker);
+
+      googleMarkers.value.push({
+        marker: poiMarker,
+        category: poi.category,
+        name: poi.name,
+        subcategory: poi.subcategory,
+        infoWindow: poiInfoWindow,
+      });
     });
   }
 }
-
 function initMap() {
   if (selectedMapType.value === 'google') {
     initGoogleMap();

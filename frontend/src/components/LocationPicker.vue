@@ -2,7 +2,7 @@
 /// <reference types="google.maps" />
 /**
  * LocationPicker - Komponent do wyboru lokalizacji
- * Używa Google Maps AutocompleteService (Data-only) + Custom UI
+ * Używa Google Maps AutocompleteSuggestion (nowe API) + Custom UI
  * Fallback do Nominatim (OSM)
  */
 import { ref, onMounted, onUnmounted, computed, markRaw, nextTick } from 'vue';
@@ -46,31 +46,70 @@ const searchTimeout = ref<number | null>(null);
 const mapContainer = ref<HTMLElement | null>(null);
 
 let map: google.maps.Map | null = null;
-let marker: google.maps.Marker | null = null;
-let autocompleteService: google.maps.places.AutocompleteService | null = null;
+let marker: google.maps.marker.AdvancedMarkerElement | null = null;
+let sessionToken: google.maps.places.AutocompleteSessionToken | null = null;
 let geocoder: google.maps.Geocoder | null = null;
+let placesReady = false;
 
-// Google Maps Bootstrap Loader
+// Google Maps Bootstrap Loader — uses Google's recommended inline bootstrap
+// which creates a stub importLibrary before the script loads, avoiding race conditions
 function loadGoogleMapsScript(): Promise<void> {
   return new Promise((resolve, reject) => {
-    if ((window as any).google?.maps) {
+    // Already bootstrapped
+    if ((window as any).google?.maps?.importLibrary) {
       resolve();
       return;
     }
-    
+
     const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
     if (!apiKey) {
       reject(new Error('Missing VITE_GOOGLE_MAPS_API_KEY'));
       return;
     }
-    
-    const script = document.createElement('script');
-    script.src = `https://maps.googleapis.com/maps/api/js?key=${apiKey}&libraries=places&language=pl&region=PL`;
-    script.async = true;
-    script.defer = true;
-    script.onload = () => resolve();
-    script.onerror = () => reject(new Error('Failed to load Google Maps'));
-    document.head.appendChild(script);
+
+    // Google's inline bootstrap: creates a stub importLibrary that queues calls
+    // until the real script loads. This is the officially recommended approach.
+    ((g: any) => {
+      let h: any, a: any, k: any;
+      const p = "The Google Maps JavaScript API";
+      const c = "google";
+      const l = "importLibrary";
+      const q = "__ib__";
+      const m = document;
+      let b = (window as any);
+      b = b[c] || (b[c] = {});
+      const d = b.maps || (b.maps = {});
+      const r = new Set<string>();
+      const e = new URLSearchParams();
+      const u = () =>
+        // @ts-ignore
+        h || (h = new Promise(async (f: any, n: any) => {
+          await (a = m.createElement("script"));
+          e.set("libraries", [...r] + "");
+          for (k in g)
+            e.set(
+              k.replace(/[A-Z]/g, (t: string) => "_" + t[0]!.toLowerCase()),
+              g[k] as string,
+            );
+          e.set("callback", c + ".maps." + q);
+          a.src = `https://maps.googleapis.com/maps/api/js?` + e;
+          d[q] = f;
+          a.onerror = () => (h = n(Error(p + " could not load.")));
+          a.nonce = (m.querySelector("script[nonce]") as any)?.nonce || "";
+          m.head.append(a);
+        }));
+      d[l]
+        ? console.warn(p + " only loads once. Ignoring:", g)
+        : (d[l] = (f: string, ...n: any[]) => (r.add(f), u().then(() => d[l](f, ...n))));
+    })({
+      key: apiKey,
+      v: "weekly",
+      language: "pl",
+      region: "PL",
+    });
+
+    // importLibrary stub is now available, resolve immediately
+    resolve();
   });
 }
 
@@ -92,14 +131,23 @@ onMounted(async () => {
       throw new Error('Google Maps not loaded');
     }
     
+    // Load libraries via importLibrary (required with loading=async)
+    const [mapsLib, placesLib, , geocodingLib] = await Promise.all([
+      gMaps.importLibrary('maps'),
+      gMaps.importLibrary('places'),
+      gMaps.importLibrary('marker'),
+      gMaps.importLibrary('geocoding'),
+    ]);
+    
     // Init services
-    if (gMaps.places?.AutocompleteService) {
-      autocompleteService = new gMaps.places.AutocompleteService();
+    if (placesLib?.AutocompleteSuggestion) {
+      placesReady = true;
+      sessionToken = new placesLib.AutocompleteSessionToken();
     } else {
       console.warn('Google Maps Places library not available');
     }
     
-    geocoder = new gMaps.Geocoder();
+    geocoder = new geocodingLib.Geocoder();
     
     await nextTick(); // Wait for DOM
 
@@ -110,13 +158,13 @@ onMounted(async () => {
             lng: props.initialLng || 21.0122
         };
 
-        map = new gMaps.Map(mapContainer.value, {
+        map = new mapsLib.Map(mapContainer.value, {
             center: initialCoords,
             zoom: 13,
-            styles: [{ featureType: 'poi', elementType: 'labels', stylers: [{ visibility: 'off' }] }],
             mapTypeControl: false,
             streetViewControl: false,
             fullscreenControl: false,
+            mapId: import.meta.env.VITE_GOOGLE_MAPS_MAP_ID || 'd7c4c6097f8910da804db4fc',
         });
 
         if (map) {
@@ -157,7 +205,7 @@ async function handleInput() {
     
     try {
       // 1. Try Google Autocomplete first (if available)
-      if (autocompleteService && !mapLoadError.value) {
+      if (placesReady && !mapLoadError.value) {
         try {
           const googleResults = await getGooglePredictions(searchQuery.value);
           if (!alive.value) return;
@@ -186,28 +234,39 @@ async function handleInput() {
   }, 300);
 }
 
-function getGooglePredictions(input: string): Promise<LocationSuggestion[]> {
-  return new Promise((resolve, reject) => {
-    if (!autocompleteService) return reject("No service");
-    const gMaps = (window as any).google?.maps;
-    
-    autocompleteService.getPlacePredictions(
-      { input, componentRestrictions: { country: 'pl' }, types: ['geocode', 'establishment'] },
-      (predictions: any, status: any) => {
-        if (status !== gMaps?.places?.PlacesServiceStatus?.OK || !predictions) {
-          return resolve([]);
-        }
-        
-        const mapped = predictions.map((p: any) => markRaw({
-          id: p.place_id,
-          title: p.structured_formatting.main_text,
-          subtitle: p.structured_formatting.secondary_text,
-          source: 'google' as const
-        }));
-        resolve(mapped);
-      }
-    );
-  });
+async function getGooglePredictions(input: string): Promise<LocationSuggestion[]> {
+  if (!placesReady) throw new Error("No service");
+  const gMaps = (window as any).google?.maps;
+
+  try {
+    const request: any = {
+      input,
+      includedRegionCodes: ['pl'],
+      language: 'pl',
+      sessionToken: sessionToken,
+    };
+
+    const { suggestions } = await gMaps.places.AutocompleteSuggestion.fetchAutocompleteSuggestions(request);
+
+    if (!suggestions || suggestions.length === 0) return [];
+
+    const mapped = suggestions
+      .filter((s: any) => s.placePrediction)
+      .map((s: any) => {
+        const p = s.placePrediction;
+        return markRaw({
+          id: p.placeId,
+          title: p.mainText?.text || p.text?.text || '',
+          subtitle: p.secondaryText?.text || p.text?.text || '',
+          source: 'google' as const,
+          original: p,
+        });
+      });
+    return mapped;
+  } catch (e) {
+    console.warn('AutocompleteSuggestion failed', e);
+    return [];
+  }
 }
 
 async function getNominatimPredictions(input: string): Promise<LocationSuggestion[]> {
@@ -238,19 +297,27 @@ async function selectSuggestion(suggestion: LocationSuggestion) {
   if (!alive.value) return;
 
   if (suggestion.source === 'google') {
-    // Resolve Google Place ID
-    if (!geocoder) return;
+    // Resolve Google Place using new Place.fetchFields API
+    const gMaps = (window as any).google?.maps;
     try {
-      const response = await geocoder.geocode({ placeId: suggestion.id });
+      const place = new gMaps.places.Place({
+        id: suggestion.id,
+        requestedLanguage: 'pl',
+      });
+      await place.fetchFields({
+        fields: ['displayName', 'formattedAddress', 'location'],
+      });
       if (!alive.value) return;
-      
-      if (response.results[0]?.geometry?.location) {
-        const loc = response.results[0].geometry.location;
-        selectedAddress.value = response.results[0].formatted_address;
-        setLocation(loc.lat(), loc.lng());
+
+      // Reset session token after place selection (billing boundary)
+      sessionToken = new gMaps.places.AutocompleteSessionToken();
+
+      if (place.location) {
+        selectedAddress.value = place.formattedAddress || place.displayName || '';
+        setLocation(place.location.lat(), place.location.lng());
       }
     } catch (e) {
-      console.error("Geocoding failed", e);
+      console.error("Place.fetchFields failed", e);
       if (!alive.value) return;
       // Fallback: search query text on Nominatim if Google details fail
       const fallback = await getNominatimPredictions(suggestion.title);
@@ -274,13 +341,15 @@ function setLocation(lat: number, lng: number) {
   if (map && !mapLoadError.value && gMaps) {
     try {
       if (marker) {
-        marker.setPosition({ lat, lng });
+        marker.position = { lat, lng };
       } else {
-        marker = new gMaps.Marker({
-          position: { lat, lng },
-          map: map,
-          animation: gMaps.Animation.DROP
-        });
+        const markerLib = gMaps.marker;
+        if (markerLib?.AdvancedMarkerElement) {
+          marker = new markerLib.AdvancedMarkerElement({
+            position: { lat, lng },
+            map: map,
+          });
+        }
       }
       map.panTo({ lat, lng });
       map.setZoom(15);
@@ -320,9 +389,10 @@ const alive = ref(true);
 onUnmounted(() => {
   alive.value = false;
   if (searchTimeout.value) clearTimeout(searchTimeout.value);
-  if (marker) marker.setMap(null);
+  if (marker) marker.map = null;
   marker = null;
   map = null;
+  sessionToken = null;
 });
 </script>
 
