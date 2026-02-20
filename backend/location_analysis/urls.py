@@ -12,6 +12,7 @@ from .views import (
     ProvidersView, 
     ProfilesView,
     ReportDetailView,
+    RescoreReportView,
 )
 
 router = DefaultRouter()
@@ -25,5 +26,6 @@ urlpatterns = [
     path('profiles/', ProfilesView.as_view(), name='profiles'),
     path('profiles/<str:profile_key>/', ProfilesView.as_view(), name='profile-detail'),
     path('report/<str:public_id>/', ReportDetailView.as_view(), name='report-detail'),
+    path('report/<str:public_id>/rescore/', RescoreReportView.as_view(), name='report-rescore'),
     path('', include(router.urls)),
 ]

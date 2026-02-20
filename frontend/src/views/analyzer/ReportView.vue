@@ -66,6 +66,81 @@ const googleMapId = import.meta.env.VITE_GOOGLE_MAPS_MAP_ID || 'DEMO_MAP_ID';
 // DEV mode toggle (persisted in localStorage via SettingsDrawer)
 const devMode = ref(false);
 
+// Profile switching (rescore)
+const availableProfiles = ref<Array<{ key: string; name: string; emoji: string; description: string }>>([]);
+const isRescoring = ref(false);
+const rescoreError = ref('');
+const rescoreCount = ref(0);
+const rescoreLimit = ref(3);
+
+const currentProfileKey = computed(() => {
+  return report.value?.profile?.key ||
+         report.value?.generation_params?.profile?.key ||
+         'family';
+});
+
+const rescoresRemaining = computed(() => Math.max(0, rescoreLimit.value - rescoreCount.value));
+
+// Fetch available profiles on mount
+async function loadAvailableProfiles() {
+  try {
+    const data = await analyzerApi.getProfiles();
+    // Exclude 'custom' — requires user-defined radii
+    availableProfiles.value = data.profiles.filter(p => p.key !== 'custom');
+  } catch (e) {
+    console.warn('Failed to load profiles for switcher', e);
+  }
+}
+
+async function switchProfile(profileKey: string) {
+  if (!report.value?.public_id || isRescoring.value) return;
+  if (profileKey === currentProfileKey.value) return;
+  if (rescoresRemaining.value <= 0) {
+    rescoreError.value = `Osiągnięto limit zmian profilu (${rescoreLimit.value}/${rescoreLimit.value})`;
+    setTimeout(() => { rescoreError.value = ''; }, 5000);
+    return;
+  }
+
+  isRescoring.value = true;
+  rescoreError.value = '';
+
+  try {
+    const result = await analyzerApi.rescoreReport(report.value.public_id, profileKey);
+
+    // Update report in-place (partial update — scoring, verdict, AI, profile)
+    (report.value as any).scoring = result.scoring;
+    (report.value as any).verdict = result.verdict;
+    (report.value as any).ai_insights = result.ai_insights;
+    (report.value as any).profile = result.profile;
+    
+    // Update generation_params with new profile and radii
+    if (report.value.generation_params) {
+      report.value.generation_params.profile = result.generation_params.profile;
+      report.value.generation_params.radii = result.generation_params.radii;
+    }
+
+    // Update rescore tracking
+    rescoreCount.value = result.rescore_count;
+    rescoreLimit.value = result.rescore_limit;
+    report.value.rescore_count = result.rescore_count;
+    report.value.rescore_limit = result.rescore_limit;
+
+  } catch (err: any) {
+    const errorData = err?.response?.data;
+    if (err?.response?.status === 429) {
+      rescoreError.value = errorData?.error || 'Limit zmian profilu osiągnięty';
+      if (errorData?.rescore_count !== undefined) {
+        rescoreCount.value = errorData.rescore_count;
+      }
+    } else {
+      rescoreError.value = errorData?.error || err.message || 'Nie udało się zmienić profilu';
+    }
+    setTimeout(() => { rescoreError.value = ''; }, 5000);
+  } finally {
+    isRescoring.value = false;
+  }
+}
+
 // Category visibility state (all visible by default)
 const categoryVisibility = ref<Record<string, boolean>>({
   shops: true,
@@ -1110,6 +1185,9 @@ onMounted(async () => {
     isLoading.value = true;
     try {
       report.value = await analyzerApi.getReportByPublicId(publicId);
+      // Initialize rescore tracking from loaded report
+      rescoreCount.value = (report.value as any).rescore_count || 0;
+      rescoreLimit.value = (report.value as any).rescore_limit || 3;
     } catch (e) {
       error.value = 'Nie udało się pobrać raportu. Sprawdź czy link jest poprawny.';
     } finally {
@@ -1137,6 +1215,17 @@ onMounted(async () => {
   }
   
   router.replace({ name: 'landing' });
+});
+
+// Load profiles for switcher after report is loaded
+watch(hasReport, (val) => {
+  if (val) {
+    loadAvailableProfiles();
+    // Initialize rescore tracking from streaming result
+    const r = report.value as any;
+    if (r?.rescore_count !== undefined) rescoreCount.value = r.rescore_count;
+    if (r?.rescore_limit !== undefined) rescoreLimit.value = r.rescore_limit;
+  }
 });
 </script>
 
@@ -1323,6 +1412,57 @@ onMounted(async () => {
                 wyliczone
               </div>
             </div>
+          </div>
+        </div>
+        
+        <!-- Profile Switcher -->
+        <div v-if="availableProfiles.length > 1 && report!.verdict" class="bg-white rounded-2xl p-5 shadow-lg border border-slate-100">
+          <div class="flex items-center justify-between mb-3">
+            <h3 class="text-sm font-semibold text-slate-700 flex items-center gap-2">
+              <i class="pi pi-users text-indigo-500"></i>
+              Zmień profil
+            </h3>
+            <span 
+              class="text-xs px-2.5 py-1 rounded-full font-medium"
+              :class="rescoresRemaining > 0 ? 'bg-indigo-50 text-indigo-600' : 'bg-red-50 text-red-600'"
+            >
+              {{ rescoresRemaining > 0 ? `Pozostało ${rescoresRemaining}/${rescoreLimit}` : 'Limit osiągnięty' }}
+            </span>
+          </div>
+          
+          <!-- Profile pills -->
+          <div class="flex flex-wrap gap-2">
+            <button
+              v-for="profile in availableProfiles"
+              :key="profile.key"
+              @click="switchProfile(profile.key)"
+              :disabled="isRescoring || (rescoresRemaining <= 0 && profile.key !== currentProfileKey)"
+              class="flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-medium transition-all duration-200 border"
+              :class="[
+                profile.key === currentProfileKey
+                  ? 'bg-indigo-500 text-white border-indigo-500 shadow-md shadow-indigo-200'
+                  : rescoresRemaining <= 0
+                    ? 'bg-slate-50 text-slate-400 border-slate-200 cursor-not-allowed'
+                    : 'bg-white text-slate-700 border-slate-200 hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-700 cursor-pointer'
+              ]"
+            >
+              <span>{{ profile.emoji }}</span>
+              <span>{{ profile.name }}</span>
+            </button>
+          </div>
+          
+          <!-- Loading indicator -->
+          <div v-if="isRescoring" class="mt-3 flex items-center gap-2 text-sm text-indigo-600">
+            <svg class="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            Przeliczanie scoringu dla nowego profilu...
+          </div>
+          
+          <!-- Error message -->
+          <div v-if="rescoreError" class="mt-3 text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2">
+            {{ rescoreError }}
           </div>
         </div>
         

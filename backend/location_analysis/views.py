@@ -244,6 +244,10 @@ class ReportDetailView(APIView):
             if analysis.verdict_data and 'verdict' not in report:
                 report['verdict'] = analysis.verdict_data
             
+            # Dodaj rescore tracking
+            report['rescore_count'] = analysis.rescore_count
+            report['rescore_limit'] = analysis.rescore_limit
+            
             return Response(report)
         
         # Fallback - zbuduj z pól modelu
@@ -283,3 +287,59 @@ class ReportDetailView(APIView):
             'public_id': analysis.public_id,
             'ai_insights': analysis.ai_insights_data or {},
         })
+
+
+class RescoreReportView(APIView):
+    """
+    Zmiana profilu na istniejącym raporcie (bez ponownego pobierania danych geo).
+    
+    POST /api/report/{public_id}/rescore/
+    Body: { "profile_key": "urban" }
+    Returns: { scoring, verdict, ai_insights, profile, rescore_count, rescore_limit }
+    """
+    
+    def post(self, request, public_id):
+        from .rescore_service import rescore_service, RescoreLimitExceeded, RescoreDataMissing
+        
+        analysis = get_object_or_404(LocationAnalysis, public_id=public_id)
+        
+        profile_key = request.data.get('profile_key')
+        if not profile_key:
+            return Response(
+                {'error': 'Brak parametru profile_key'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Walidacja profilu
+        try:
+            get_profile(profile_key)
+        except Exception:
+            return Response(
+                {'error': f'Nieznany profil: {profile_key}'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            result = rescore_service.rescore(analysis, profile_key)
+            return Response(result)
+        except RescoreLimitExceeded as e:
+            return Response(
+                {'error': str(e), 'rescore_count': analysis.rescore_count, 'rescore_limit': analysis.rescore_limit},
+                status=status.HTTP_429_TOO_MANY_REQUESTS
+            )
+        except RescoreDataMissing as e:
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_422_UNPROCESSABLE_ENTITY
+            )
+        except ValueError as e:
+            return Response(
+                {'error': str(e)},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        except Exception as e:
+            logger.error("Rescore error: %s", e, exc_info=True)
+            return Response(
+                {'error': 'Wewnętrzny błąd serwera podczas przeliczania profilu'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )

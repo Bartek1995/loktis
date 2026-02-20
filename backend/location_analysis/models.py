@@ -104,6 +104,16 @@ class LocationAnalysis(models.Model):
         help_text="Score dostosowany do profilu użytkownika"
     )
     
+    # Profile switching (rescore) tracking
+    rescore_count = models.IntegerField(
+        default=0,
+        help_text="Ile razy zmieniono profil na tym raporcie"
+    )
+    rescore_limit = models.IntegerField(
+        default=3,
+        help_text="Maksymalna liczba zmian profilu per raport"
+    )
+    
     created_at = models.DateTimeField(auto_now_add=True)
     
     class Meta:

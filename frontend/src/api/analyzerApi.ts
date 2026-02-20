@@ -250,6 +250,30 @@ export interface AnalysisReport {
     poi_provider: string;
     coords: { lat: number; lon: number };
   };
+  // Rescore tracking
+  rescore_count?: number;
+  rescore_limit?: number;
+}
+
+export interface RescoreResponse {
+  scoring: ProfileScoringData;
+  verdict: VerdictData;
+  ai_insights: {
+    summary: string;
+    quick_facts?: string[];
+    attention_points?: string[];
+    verification_checklist?: string[];
+    recommendation_line?: string;
+    target_audience?: string;
+    disclaimer?: string;
+  };
+  profile: ProfileData;
+  generation_params: {
+    profile: { key: string; name: string; emoji: string; ux_context?: Record<string, any> };
+    radii: Record<string, number>;
+  };
+  rescore_count: number;
+  rescore_limit: number;
 }
 
 export interface ValidationResult {
@@ -513,6 +537,17 @@ export const analyzerApi = {
    */
   async getReportByPublicId(publicId: string): Promise<AnalysisReport> {
     const response = await apiClient.get<AnalysisReport>(`/report/${publicId}/`);
+    return response.data;
+  },
+
+  /**
+   * Przelicza raport na inny profil (bez ponownego pobierania danych geo)
+   * Endpoint: POST /api/report/{public_id}/rescore/
+   */
+  async rescoreReport(publicId: string, profileKey: string): Promise<RescoreResponse> {
+    const response = await apiClient.post<RescoreResponse>(`/report/${publicId}/rescore/`, {
+      profile_key: profileKey,
+    });
     return response.data;
   },
 };
