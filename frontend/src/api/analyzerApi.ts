@@ -116,12 +116,27 @@ export interface NatureMetrics {
   water_label: string | null;
 }
 
+export interface AirQualityData {
+  aqi: number | null;
+  pm10: number | null;
+  pm25: number | null;
+  provider: string;
+  timestamp?: string;
+  monthly_history?: Array<{
+    month: string;
+    aqi: number | null;
+    pm10: number | null;
+    pm25: number | null;
+  }>;
+}
+
 export interface NeighborhoodData {
   has_location: boolean;
   score: number | null;
   summary: string;
   details: Record<string, CategoryScoreDetails | TrafficAnalysis | any>;
   poi_stats: Record<string, POICategoryStats>;
+  air_quality?: AirQualityData | null;
   markers: Array<{
     lat: number;
     lon: number;

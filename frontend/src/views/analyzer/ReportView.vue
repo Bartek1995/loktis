@@ -243,6 +243,142 @@ const greeneryLevelEmoji = computed(() => {
   return '🌵';
 });
 
+// Air Quality
+const airQuality = computed(() => report.value?.neighborhood?.air_quality || null);
+
+const aqiColor = computed(() => {
+  const aqi = airQuality.value?.aqi;
+  if (!aqi) return { bg: 'bg-slate-100', text: 'text-slate-700', border: 'border-slate-200', icon: 'pi-cloud', gradient: 'from-slate-400 to-slate-500' };
+  if (aqi <= 20) return { bg: 'bg-emerald-50', text: 'text-emerald-700', border: 'border-emerald-200', icon: 'pi-check-circle', gradient: 'from-emerald-400 to-emerald-600' };
+  if (aqi <= 40) return { bg: 'bg-green-50', text: 'text-green-700', border: 'border-green-200', icon: 'pi-check-circle', gradient: 'from-green-400 to-green-600' };
+  if (aqi <= 60) return { bg: 'bg-yellow-50', text: 'text-yellow-700', border: 'border-yellow-200', icon: 'pi-info-circle', gradient: 'from-yellow-400 to-yellow-600' };
+  if (aqi <= 80) return { bg: 'bg-orange-50', text: 'text-orange-700', border: 'border-orange-200', icon: 'pi-info-circle', gradient: 'from-orange-400 to-orange-600' };
+  if (aqi <= 100) return { bg: 'bg-red-50', text: 'text-red-600', border: 'border-red-200', icon: 'pi-exclamation-triangle', gradient: 'from-red-400 to-red-600' };
+  return { bg: 'bg-purple-50', text: 'text-purple-700', border: 'border-purple-200', icon: 'pi-exclamation-triangle', gradient: 'from-purple-500 to-purple-700' };
+});
+
+const aqiLabel = computed(() => {
+  const aqi = airQuality.value?.aqi;
+  if (!aqi) return 'Brak danych';
+  if (aqi <= 20) return 'Bardzo dobra';
+  if (aqi <= 40) return 'Dobra';
+  if (aqi <= 60) return 'Umiarkowana';
+  if (aqi <= 80) return 'Dostateczna';
+  if (aqi <= 100) return 'Zła';
+  return 'Bardzo zła';
+});
+
+const aqiDescription = computed(() => {
+  const aqi = airQuality.value?.aqi;
+  if (!aqi) return '';
+  if (aqi <= 20) return 'Wyjątkowo czyste powietrze – idealne warunki do spacerów i aktywności na zewnątrz.';
+  if (aqi <= 40) return 'Dobra jakość powietrza. Można swobodnie przebywać na zewnątrz.';
+  if (aqi <= 60) return 'Przeciętna jakość. Osoby wrażliwe (astma, alergie) mogą odczuwać dyskomfort.';
+  if (aqi <= 80) return 'Słabsza jakość – częste epizody smogowe, szczególnie zimą. Warto sprawdzić przed przeprowadzką.';
+  if (aqi <= 100) return 'Zła jakość – regularne przekroczenia norm. Zalecany oczyszczacz powietrza w mieszkaniu.';
+  return 'Bardzo zła jakość – poważny problem zdrowotny. Konieczny oczyszczacz i unikanie aktywności na zewnątrz.';
+});
+
+// PM color helpers
+function getPmColor(type: 'pm10' | 'pm25', value: number | null): { text: string; bg: string; label: string } {
+  if (value === null) return { text: 'text-slate-500', bg: 'bg-slate-100', label: 'Brak' };
+  if (type === 'pm10') {
+    if (value <= 20) return { text: 'text-emerald-700', bg: 'bg-emerald-50', label: 'Norma' };
+    if (value <= 50) return { text: 'text-yellow-700', bg: 'bg-yellow-50', label: 'Podwyższone' };
+    return { text: 'text-red-600', bg: 'bg-red-50', label: 'Przekroczone' };
+  }
+  // pm25
+  if (value <= 10) return { text: 'text-emerald-700', bg: 'bg-emerald-50', label: 'Norma' };
+  if (value <= 25) return { text: 'text-yellow-700', bg: 'bg-yellow-50', label: 'Podwyższone' };
+  return { text: 'text-red-600', bg: 'bg-red-50', label: 'Przekroczone' };
+}
+
+const pm10Status = computed(() => getPmColor('pm10', airQuality.value?.pm10 ?? null));
+const pm25Status = computed(() => getPmColor('pm25', airQuality.value?.pm25 ?? null));
+
+// Chart State
+
+const aqiChartSeries = computed(() => {
+  const history = airQuality.value?.monthly_history;
+  if (!history || history.length === 0) return [];
+  return [
+    {
+      name: 'Średni AQI',
+      data: history.map(item => item.aqi || 0)
+    }
+  ];
+});
+
+const aqiChartOptions = computed(() => {
+  const history = airQuality.value?.monthly_history || [];
+  const categories = history.map(item => {
+    const parts = item.month.split('-');
+    if (parts.length >= 2 && typeof parts[0] === 'string' && typeof parts[1] === 'string') {
+      const monthNames = ['', 'Sty', 'Lut', 'Mar', 'Kwi', 'Maj', 'Cze', 'Lip', 'Sie', 'Wrz', 'Paź', 'Lis', 'Gru'];
+      const mIdx = parseInt(String(parts[1]), 10);
+      return monthNames[mIdx] || String(parts[1]);
+    }
+    return item.month;
+  });
+  
+  return {
+    chart: {
+      type: 'area',
+      height: 220,
+      fontFamily: 'inherit',
+      toolbar: { show: false },
+      zoom: { enabled: false },
+      background: 'transparent'
+    },
+    colors: ['#0ea5e9'],
+    fill: {
+      type: 'gradient',
+      gradient: {
+        shadeIntensity: 1,
+        opacityFrom: 0.4,
+        opacityTo: 0.05,
+        stops: [0, 100]
+      }
+    },
+    annotations: {
+      yaxis: [
+        { y: 0, y2: 40, fillColor: '#10b981', opacity: 0.07, label: { text: 'Dobra', style: { color: '#10b981', fontSize: '10px', background: 'transparent' }, position: 'front' } },
+        { y: 40, y2: 80, fillColor: '#f59e0b', opacity: 0.07, label: { text: 'Umiarkowana', style: { color: '#f59e0b', fontSize: '10px', background: 'transparent' }, position: 'front' } },
+        { y: 80, y2: 150, fillColor: '#ef4444', opacity: 0.07, label: { text: 'Zła', style: { color: '#ef4444', fontSize: '10px', background: 'transparent' }, position: 'front' } }
+      ]
+    },
+    dataLabels: { enabled: false },
+    stroke: { curve: 'smooth', width: 2.5 },
+    xaxis: {
+      categories,
+      labels: { style: { colors: '#94a3b8', fontSize: '11px' } },
+      axisBorder: { show: false },
+      axisTicks: { show: false }
+    },
+    yaxis: {
+      min: 0,
+      max: (max: number) => Math.max(max + 10, 80),
+      labels: { style: { colors: '#94a3b8', fontSize: '11px' } }
+    },
+    grid: {
+      borderColor: '#f1f5f9',
+      strokeDashArray: 4,
+      xaxis: { lines: { show: false } },
+      yaxis: { lines: { show: true } },
+    },
+    tooltip: {
+      theme: 'light',
+      y: {
+        formatter: (val: number) => {
+          if (val <= 40) return `${val} (dobra)`;
+          if (val <= 80) return `${val} (umiarkowana)`;
+          return `${val} (zła)`;
+        }
+      }
+    }
+  };
+});
+
 // Preferences Impact - shows how user settings affected the score
 interface PreferenceImpactItem {
   category: string;
@@ -441,14 +577,6 @@ const unifiedConfidence = computed(() => {
   return { pct: 70, source: 'default', reasons: [] };
 });
 
-// Confidence color helper
-const confidenceColor = computed(() => {
-  const pct = unifiedConfidence.value.pct;
-  if (pct >= 80) return 'emerald';
-  if (pct >= 60) return 'amber';
-  return 'red';
-});
-
 // Has actual data quality issues (errors, not just empty signal)
 // SEMANTIC: 'empty' = valid signal (0 in radius), 'error' = data problem
 const hasDataQualityIssues = computed(() => {
@@ -600,10 +728,6 @@ const showDescription = ref(false);
 
 // Methods
 function goBack() {
-  router.push({ name: 'landing' });
-}
-
-function analyzeAnother() {
   router.push({ name: 'landing' });
 }
 
@@ -1676,17 +1800,6 @@ watch(hasReport, (val) => {
                 </ul>
               </div>
             </div>
-            
-            <!-- Dealbreaker Warning -->
-            <div v-if="report!.scoring.has_dealbreaker" class="mt-4 p-4 bg-red-100 border border-red-200 rounded-lg">
-              <div class="flex items-center gap-2 text-red-700">
-                <i class="pi pi-exclamation-triangle text-lg"></i>
-                <span class="font-semibold">Uwaga: Wykryto krytyczny problem!</span>
-              </div>
-              <p v-if="report!.scoring.dealbreaker_category" class="text-sm text-red-600 mt-1">
-                Kategoria "{{ getCategoryName(report!.scoring.dealbreaker_category) }}" ma zbyt niski wynik dla wybranego profilu.
-              </p>
-            </div>
           </details>
         </div>
         
@@ -1918,7 +2031,114 @@ watch(hasReport, (val) => {
                 </p>
               </div>
               
-              <!-- Nature Metrics Section -->
+              <!-- Air Quality Widget -->
+              <div v-if="airQuality" class="mb-8">
+                <h3 class="text-lg font-bold text-slate-900 mb-1 flex items-center gap-2">
+                  <span class="text-2xl">☁️</span>
+                  Jakość powietrza
+                </h3>
+                <p class="text-sm text-slate-500 mb-4 ml-9">Średnia roczna z ostatnich 365 dni • źródło: {{ airQuality.provider === 'open_meteo' ? 'Open-Meteo' : airQuality.provider }}</p>
+                
+                <!-- Main AQI Card -->
+                <div class="rounded-2xl border-2 p-5 mb-4 transition-all" :class="[aqiColor.bg, aqiColor.border]">
+                  <div class="flex items-start gap-4">
+                    <div class="w-14 h-14 rounded-xl flex items-center justify-center shadow-md bg-gradient-to-br text-white shrink-0" :class="aqiColor.gradient">
+                      <span class="text-2xl font-bold">{{ airQuality.aqi }}</span>
+                    </div>
+                    <div class="flex-1">
+                      <div class="flex items-center gap-2 mb-1">
+                        <span class="font-bold text-lg" :class="aqiColor.text">{{ aqiLabel }}</span>
+                        <span class="text-xs px-2 py-0.5 rounded-full bg-white/60 font-medium" :class="aqiColor.text">EAQI</span>
+                      </div>
+                      <p class="text-sm text-slate-600 leading-relaxed">{{ aqiDescription }}</p>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- PM Cards -->
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
+                  <!-- PM10 -->
+                  <div class="rounded-xl border p-4 bg-white" :class="pm10Status.bg">
+                    <div class="flex items-center justify-between mb-2">
+                      <div class="flex items-center gap-2">
+                        <span class="font-bold text-sm text-slate-700">PM10</span>
+                        <span class="text-xs px-1.5 py-0.5 rounded font-medium" :class="[pm10Status.text, pm10Status.bg]">{{ pm10Status.label }}</span>
+                      </div>
+                      <span class="text-lg font-bold" :class="pm10Status.text">
+                        {{ airQuality.pm10 !== null ? `${airQuality.pm10} µg/m³` : '–' }}
+                      </span>
+                    </div>
+                    <p class="text-xs text-slate-500 leading-relaxed">Pył zawieszony o średnicy do 10µm – pochodzi z ruchu drogowego, budowy i ogrzewania. Norma WHO: ≤20 µg/m³.</p>
+                  </div>
+                  <!-- PM2.5 -->
+                  <div class="rounded-xl border p-4 bg-white" :class="pm25Status.bg">
+                    <div class="flex items-center justify-between mb-2">
+                      <div class="flex items-center gap-2">
+                        <span class="font-bold text-sm text-slate-700">PM2.5</span>
+                        <span class="text-xs px-1.5 py-0.5 rounded font-medium" :class="[pm25Status.text, pm25Status.bg]">{{ pm25Status.label }}</span>
+                      </div>
+                      <span class="text-lg font-bold" :class="pm25Status.text">
+                        {{ airQuality.pm25 !== null ? `${airQuality.pm25} µg/m³` : '–' }}
+                      </span>
+                    </div>
+                    <p class="text-xs text-slate-500 leading-relaxed">Drobny pył przenikający do płuc i krwiobiegu – najgroźniejszy dla zdrowia. Norma WHO: ≤10 µg/m³.</p>
+                  </div>
+                </div>
+
+                <!-- Chart (always visible, not just on hover) -->
+                <div v-if="aqiChartSeries.length" class="rounded-xl border border-slate-200 bg-white p-4 mb-3">
+                  <h4 class="font-semibold text-sm text-slate-700 mb-1">Jak zmieniała się jakość powietrza w ciągu roku?</h4>
+                  <p class="text-xs text-slate-400 mb-3">Słupki w tle oznaczają strefy: <span class="text-emerald-500 font-medium">dobra</span>, <span class="text-amber-500 font-medium">umiarkowana</span>, <span class="text-red-500 font-medium">zła</span></p>
+                  <apexchart type="area" height="220" :options="aqiChartOptions" :series="aqiChartSeries"></apexchart>
+                </div>
+
+                <!-- Expandable Details for Advanced Users -->
+                <details class="group">
+                  <summary class="flex items-center gap-2 cursor-pointer text-sm text-slate-500 hover:text-slate-700 transition-colors py-2">
+                    <i class="pi pi-info-circle text-xs"></i>
+                    <span>Więcej o wskaźnikach jakości powietrza</span>
+                    <i class="pi pi-chevron-down text-xs ml-auto transition-transform group-open:rotate-180"></i>
+                  </summary>
+                  <div class="mt-2 p-4 bg-slate-50 rounded-xl border border-slate-100 text-sm text-slate-600 space-y-3">
+                    <div>
+                      <span class="font-semibold text-slate-700">EAQI (European Air Quality Index)</span> – europejski wskaźnik jakości powietrza. Uwzględnia stężenia PM2.5, PM10, NO₂, O₃ i SO₂. Im niższy, tym lepiej.
+                    </div>
+                    <div class="grid grid-cols-2 sm:grid-cols-5 gap-1 text-xs">
+                      <div class="bg-emerald-50 border border-emerald-100 rounded p-2 text-center">
+                        <div class="font-bold text-emerald-700">0–20</div>
+                        <div class="text-emerald-600">Bardzo dobra</div>
+                      </div>
+                      <div class="bg-green-50 border border-green-100 rounded p-2 text-center">
+                        <div class="font-bold text-green-700">21–40</div>
+                        <div class="text-green-600">Dobra</div>
+                      </div>
+                      <div class="bg-yellow-50 border border-yellow-100 rounded p-2 text-center">
+                        <div class="font-bold text-yellow-700">41–60</div>
+                        <div class="text-yellow-600">Umiarkowana</div>
+                      </div>
+                      <div class="bg-orange-50 border border-orange-100 rounded p-2 text-center">
+                        <div class="font-bold text-orange-700">61–80</div>
+                        <div class="text-orange-600">Dostateczna</div>
+                      </div>
+                      <div class="bg-red-50 border border-red-100 rounded p-2 text-center">
+                        <div class="font-bold text-red-700">81+</div>
+                        <div class="text-red-600">Zła</div>
+                      </div>
+                    </div>
+                    <div>
+                      <span class="font-semibold text-slate-700">PM10</span> – pył zawieszony o średnicy do 10 mikrometerów. Powstaje głównie z transportu drogowego, procesów przemysłowych i spalania paliw stałych (węgiel, drewno). Wg norm WHO roczna średnia nie powinna przekraczać <strong>20 µg/m³</strong>.
+                    </div>
+                    <div>
+                      <span class="font-semibold text-slate-700">PM2.5</span> – drobny pył zawieszony (&lt;2.5µm), który przenika do płuc, a nawet do krwiobiegu. Jest uznawany za <strong>najgroźniejszy</strong> zanieczyszczenie powietrza. Norma WHO: ≤10 µg/m³ (średnia roczna). Główne źródła: spaliny samochodowe, piece/kotły węglowe, pożary.
+                    </div>
+                    <div class="text-xs text-slate-400 pt-1 border-t border-slate-200">
+                      Źródło danych: Open-Meteo Air Quality API • Dane historyczne z ostatnich 365 dni • Uśrednienie godzinowe na miesiąc
+                    </div>
+                  </div>
+                </details>
+              </div>
+
+              <!-- Noise Score Widget -->
               <div v-if="natureMetrics" class="mb-8">
                 <h3 class="text-lg font-bold text-slate-900 mb-4 flex items-center gap-2">
                   <span class="text-2xl">🌿</span>

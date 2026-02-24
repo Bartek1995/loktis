@@ -18,6 +18,7 @@ from .ai_insights import generate_decision_insights, generate_insights_from_fact
 from .analysis_factsheet import build_factsheet_from_scoring
 from .data_quality import build_data_quality_report
 from .diagnostics import AnalysisTraceContext, get_diag_logger
+from .geo.air_quality import get_air_quality_provider
 
 logger = logging.getLogger(__name__)
 
@@ -133,7 +134,8 @@ class AnalysisService:
                 property_input=listing,
                 neighborhood_score=neighborhood_score,
                 poi_stats=poi_stats,
-                all_pois=pois
+                all_pois=pois,
+                air_quality=self._fetch_air_quality(listing.latitude, listing.longitude, slog) if listing.has_precise_location and listing.latitude else None,
             )
             ctx.end_stage("report")
             
@@ -354,7 +356,8 @@ class AnalysisService:
                 property_input=listing,
                 neighborhood_score=neighborhood_score,
                 poi_stats=poi_stats,
-                all_pois=pois
+                all_pois=pois,
+                air_quality=self._fetch_air_quality(lat, lon, slog),
             )
             ctx.end_stage("report")
             
@@ -667,6 +670,26 @@ class AnalysisService:
             'checklist': [],
             'limitations': [],
         }
+    
+    def _fetch_air_quality(self, lat: float, lon: float, slog=None) -> Optional[Dict[str, Any]]:
+        """
+        Pobiera dane o jakości powietrza z providera.
+        Zwraca None jeśli cokolwiek nie działa (graceful degradation).
+        """
+        try:
+            provider = get_air_quality_provider('open_meteo')
+            result = provider.get_air_quality(lat, lon)
+            if result and slog:
+                slog.info(
+                    stage="geo", provider="open_meteo", op="air_quality",
+                    message="Air quality data fetched",
+                    meta={"aqi": result.get("aqi"), "period": result.get("period")}
+                )
+            return result
+        except Exception as e:
+            if slog:
+                slog.warning(stage="geo", op="air_quality", message=f"Air quality fetch failed: {e}")
+            return None
 
 
 # Singleton

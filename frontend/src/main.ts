@@ -11,6 +11,9 @@ import ToastService from 'primevue/toastservice'
 import ConfirmationService from 'primevue/confirmationservice'
 import 'primeicons/primeicons.css'
 
+// ApexCharts
+import VueApexCharts from 'vue3-apexcharts'
+
 import App from './App.vue'
 import router from './router'
 import messages from './i18n'
@@ -54,5 +57,6 @@ app.use(PrimeVue, {
 })
 app.use(ToastService)
 app.use(ConfirmationService)
+app.use(VueApexCharts)
 
 app.mount('#app')

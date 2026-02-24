@@ -32,6 +32,7 @@ class AnalysisReport:
     neighborhood_details: Dict[str, Any] = field(default_factory=dict)
     poi_stats: Dict[str, Any] = field(default_factory=dict)
     map_markers: List[Dict[str, Any]] = field(default_factory=list)
+    air_quality: Optional[Dict[str, Any]] = None
     
     # Checklista
     checklist: List[str] = field(default_factory=list)
@@ -60,6 +61,7 @@ class AnalysisReport:
                 'details': self.neighborhood_details,
                 'poi_stats': self.poi_stats,
                 'markers': self.map_markers,
+                'air_quality': self.air_quality,
             },
             'checklist': self.checklist,
             'limitations': self.limitations,
@@ -92,6 +94,7 @@ class ReportBuilder:
         neighborhood_score: Optional[NeighborhoodScore] = None,
         poi_stats: Optional[Dict[str, Any]] = None,
         all_pois: Optional[Dict[str, list]] = None,
+        air_quality: Optional[Dict[str, Any]] = None,
     ) -> AnalysisReport:
         """
         Buduje pełny raport.
@@ -100,6 +103,8 @@ class ReportBuilder:
             property_input: Dane nieruchomości (opcjonalne, od użytkownika)
             neighborhood_score: Wynik analizy okolicy (opcjonalny)
             poi_stats: Statystyki POI (opcjonalny)
+            all_pois: Słownik odnalezionych POI
+            air_quality: Poziom i dane jakości powietrza
         
         Returns:
             AnalysisReport
@@ -153,6 +158,9 @@ class ReportBuilder:
             
             if all_pois:
                 report.map_markers = self._generate_markers(all_pois)
+            
+            if air_quality:
+                report.air_quality = air_quality
         else:
             report.has_location = False
             report.limitations.append(
