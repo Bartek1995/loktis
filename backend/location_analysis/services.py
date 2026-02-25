@@ -281,6 +281,7 @@ class AnalysisService:
                     fallback_started=[],  # TODO: track from hybrid provider
                     fallback_contributed=[],  # TODO: track from hybrid provider
                     cache_used=poi_cache_used,
+                    profile_weights=profile.weights,
                 )
                 
                 ctx.start_stage("scoring")

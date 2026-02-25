@@ -49,10 +49,25 @@ FALLBACK_TYPES = {
     'education': ['school'],
     'health': ['pharmacy', 'hospital', 'doctor', 'dentist', 'health'],
     'transport': ['bus_station', 'transit_station', 'train_station'],
-    'food': ['restaurant', 'cafe', 'fast_food', 'bakery', 'meal_takeaway'],
+    'food': ['restaurant', 'cafe', 'bakery', 'meal_takeaway'],
     'finance': ['bank', 'atm'],
     'nature_place': ['park'],
+    'car_access': ['parking', 'gas_station'],
 }
+
+# Startup validation: every fallback type must be a valid Google type
+def _validate_fallback_types():
+    from .google_places_client import VALID_GOOGLE_TYPES
+    for cat, types in FALLBACK_TYPES.items():
+        for t in types:
+            if t not in VALID_GOOGLE_TYPES:
+                raise ValueError(
+                    f"FALLBACK_TYPES['{cat}'] contains '{t}' which is NOT a valid Google Places API type. "
+                    f"Check VALID_GOOGLE_TYPES in google_places_client.py."
+                )
+
+# Run on import (fail fast)
+_validate_fallback_types()
 
 # Progi coverage per kategoria
 DEFAULT_COVERAGE_THRESHOLD = 2

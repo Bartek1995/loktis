@@ -43,7 +43,7 @@ backend/media/*
 backend/.env
 backend/.env.local
 backend/.env.*.local
-
+backend/global_tests/test_logs/*
 # IDE
 .vscode/
 .idea/

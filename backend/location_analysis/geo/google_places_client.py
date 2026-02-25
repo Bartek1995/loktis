@@ -16,6 +16,38 @@ from .overpass_client import POI, MAX_POIS_PER_CATEGORY
 logger = logging.getLogger(__name__)
 
 
+# =============================================================================
+# VALID GOOGLE PLACES API (NEW) TYPES — single source of truth
+# Reference: https://developers.google.com/maps/documentation/places/web-service/supported_types
+# Any type used in SEARCH_TYPES or FALLBACK_TYPES MUST be in this set.
+# =============================================================================
+VALID_GOOGLE_TYPES = frozenset({
+    # Shops
+    'supermarket', 'convenience_store', 'shopping_mall', 'store',
+    'grocery_or_supermarket', 'bakery', 'clothing_store', 'shoe_store',
+    'hardware_store', 'electronics_store', 'furniture_store', 'book_store',
+    'florist', 'pet_store',
+    # Transport
+    'subway_station', 'bus_station', 'train_station', 'transit_station',
+    'light_rail_station',
+    # Education
+    'school', 'primary_school', 'secondary_school', 'university', 'library',
+    # Health
+    'pharmacy', 'hospital', 'doctor', 'dentist', 'health',
+    'physiotherapist', 'veterinary_care',
+    # Nature
+    'park', 'natural_feature', 'campground',
+    # Leisure
+    'gym', 'stadium', 'amusement_park', 'bowling_alley', 'movie_theater', 'spa',
+    # Food — NOTE: 'fast_food' is NOT a valid Google type!
+    'restaurant', 'cafe', 'bar', 'meal_delivery', 'meal_takeaway',
+    # Finance
+    'bank', 'atm',
+    # Car access
+    'parking', 'gas_station',
+})
+
+
 # Mapowanie typów Google Places → nasze kategorie
 GOOGLE_TO_CATEGORY = {
     # Shops

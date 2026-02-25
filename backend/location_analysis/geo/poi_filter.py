@@ -73,8 +73,8 @@ def validate_category_membership(poi: "POI", category: str) -> bool:
     google_types = set(tags.get('types', []) or [])
     source = tags.get('source', poi.source)
     
-    # For Google fallback - check Google types
-    if source in ('google_fallback', 'google', 'google_enriched'):
+    # For Google fallback / enriched / merged - check Google types strictly
+    if source in ('google_fallback', 'google', 'google_enriched', 'merged'):
         if category == 'food':
             return bool(google_types & FOOD_GOOGLE_TYPES)
         elif category == 'health':

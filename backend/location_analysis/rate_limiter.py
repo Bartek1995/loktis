@@ -123,6 +123,11 @@ def rate_limit(limiter: RateLimiter = None):
     def decorator(view_func):
         @wraps(view_func)
         def wrapped(self, request, *args, **kwargs):
+            # Bypass rate limit for test runner (only in DEBUG mode)
+            from django.conf import settings
+            if settings.DEBUG and request.META.get('HTTP_X_TEST_RUN') == '1':
+                return view_func(self, request, *args, **kwargs)
+
             client_ip = limiter.get_client_ip(request)
             is_allowed, error_message = limiter.is_allowed(client_ip)
             

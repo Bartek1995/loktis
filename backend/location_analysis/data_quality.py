@@ -162,12 +162,16 @@ def calculate_confidence(
     coverage: Dict[str, CategoryCoverage],
     overpass_status: str,
     important_categories: List[str] = None,
+    profile_weights: Dict[str, float] = None,
 ) -> tuple[int, List[str]]:
     """
     Calculate confidence based on DATA QUALITY issues only.
     
     DOES NOT penalize 'empty' status - that's a signal, not an error.
     ONLY penalizes 'error' status and provider failures.
+    
+    NEW: If profile_weights is provided, penalizes empty categories that
+    are CRITICAL for the active profile (weight >= 0.10).
     """
     if important_categories is None:
         important_categories = ["shops", "transport", "education", "health", "nature_place"]
@@ -196,6 +200,18 @@ def calculate_confidence(
         
         # Note: 'empty' is NOT penalized - it's valid signal
         # Note: 'partial' is NOT penalized - sparse data is still valid
+    
+    # Profile-aware: empty category with high weight = lower confidence
+    if profile_weights:
+        all_cats = set(important_categories) | set(profile_weights.keys())
+        for cat in all_cats:
+            weight = abs(profile_weights.get(cat, 0))
+            if weight < 0.10:
+                continue  # Only care about categories with ≥10% weight
+            cov = coverage.get(cat)
+            if cov and cov.status == "empty":
+                confidence -= 10
+                reasons.append(f"Brak danych: {_category_name(cat)} (ważna dla profilu)")
     
     # Clamp
     confidence = max(0, min(100, confidence))
@@ -232,6 +248,7 @@ def build_data_quality_report(
     raw_counts: Dict[str, int] = None,
     reject_counts: Dict[str, Dict[str, int]] = None,
     provider_errors_by_category: Dict[str, List[str]] = None,
+    profile_weights: Dict[str, float] = None,
 ) -> DataQualityReport:
     """
     Build DataQualityReport from POI data and metadata.
@@ -253,6 +270,7 @@ def build_data_quality_report(
     error_categories = []
     
     all_categories = set((pois_by_category or {}).keys()) | set(radii.keys())
+    queried_categories = set((pois_by_category or {}).keys())
     
     for cat in all_categories:
         pois = (pois_by_category or {}).get(cat, [])
@@ -269,15 +287,22 @@ def build_data_quality_report(
             else:
                 source = "overpass"  # Fallback was started but didn't contribute
         
+        # Category from radii but never queried → not a real data quality issue
+        was_queried = cat in queried_categories
+        
         # Determine if there was a provider error for this category
-        had_error = bool(cat_errors) or (overpass_status == "error")
+        had_error = bool(cat_errors) or (overpass_status == "error" and was_queried)
         
         # Determine status with proper semantics
-        status = determine_status(kept_count, raw, had_error)
+        if not was_queried and not had_error:
+            # Category exists in profile radii but was never queried by any provider
+            cat_status = "no_query"
+        else:
+            cat_status = determine_status(kept_count, raw, had_error)
         
         coverage[cat] = CategoryCoverage(
             source=source,
-            status=status,
+            status=cat_status,
             raw_count=raw,
             kept_count=kept_count,
             radius_m=radii.get(cat, 1000),
@@ -287,13 +312,13 @@ def build_data_quality_report(
         )
         
         # Track for easy access
-        if status == "empty":
+        if cat_status == "empty":
             empty_categories.append(cat)
-        elif status == "error":
+        elif cat_status == "error":
             error_categories.append(cat)
     
-    # Calculate confidence (only penalizes errors, not empty)
-    confidence, reasons = calculate_confidence(coverage, overpass_status)
+    # Calculate confidence (only penalizes errors, not empty — unless profile-critical)
+    confidence, reasons = calculate_confidence(coverage, overpass_status, profile_weights=profile_weights)
     
     report = DataQualityReport(
         confidence_pct=confidence,

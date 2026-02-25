@@ -658,11 +658,13 @@ class ProfileScoringEngine:
             elif nearest_rails <= 150:
                 penalty += 4
 
-        # Road density (proxy)
-        road_count = len(roads)
-        if road_count >= 10:
+        # Road density — only count significant (noisy) roads, not tertiary/residential
+        SIGNIFICANT_ROAD_TYPES = {'motorway', 'trunk', 'primary', 'secondary', 'tram', 'rail'}
+        significant_count = sum(1 for r in roads if r.subcategory in SIGNIFICANT_ROAD_TYPES)
+        road_count = len(roads)  # total for debug
+        if significant_count >= 10:
             penalty += 5
-        elif road_count >= 5:
+        elif significant_count >= 5:
             penalty += 3
 
         # Skalowanie karą ciszy profilu

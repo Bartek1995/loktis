@@ -218,6 +218,21 @@ class OverpassClient:
                 'rail': 'Kolej',
             }
         },
+        'car_access': {
+            'query': '["amenity"~"parking|fuel"]',
+            'alt_queries': [
+                '["parking"]',
+            ],
+            'name': 'Dojazd samochodem',
+            'subcategories': {
+                'parking': 'Parking',
+                'fuel': 'Stacja paliw',
+                'underground': 'Parking podziemny',
+                'surface': 'Parking naziemny',
+                'multi-storey': 'Parking wielopoziomowy',
+                'garage': 'Garaż',
+            }
+        },
     }
 
     # Maksymalna liczba kategorii per POI (primary + secondary)
@@ -250,8 +265,9 @@ class OverpassClient:
         elif amenity in ['bank', 'atm']:
             add('finance', 1.0)
         elif amenity == 'fuel':
-            # Stacja paliw -> transport (services), nie shops
-            add('transport', 0.8)
+            add('car_access', 1.0)
+        elif amenity == 'parking':
+            add('car_access', 1.0)
         
         # healthcare=* tag (doctor, centre, etc.)
         healthcare = tags.get('healthcare')
@@ -300,6 +316,11 @@ class OverpassClient:
 
         if highway in ['motorway', 'trunk', 'primary', 'secondary', 'tertiary']:
             add('roads', 1.0)
+
+        # parking=* tag (surface, underground, multi-storey, garage)
+        parking_tag = tags.get('parking')
+        if parking_tag:
+            add('car_access', 1.0)
 
         return scores
 
@@ -620,6 +641,9 @@ class OverpassClient:
             subcategory = tags.get('amenity', '')
         elif category == 'roads':
             subcategory = tags.get('highway') or tags.get('railway', '')
+        elif category == 'car_access':
+            # parking=surface/underground/multi-storey/garage, amenity=parking/fuel
+            subcategory = tags.get('parking') or tags.get('amenity', '')
             
         # Tłumaczenie subkategorii
         subcategory_pl = config.get('subcategories', {}).get(subcategory)
