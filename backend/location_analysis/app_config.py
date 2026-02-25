@@ -55,6 +55,15 @@ class AppConfig:
     air_quality_provider: str = "open_meteo"  # 'open_meteo' | future: 'gios'
     air_quality_enabled: bool = True
 
+    # --- AI Provider ---
+    ai_provider: str = "ollama"  # 'gemini' | 'ollama' | 'off'
+    ai_model_gemini: str = "gemini-2.0-flash"
+    ai_model_ollama: str = "qwen2.5:7b-instruct"
+    ollama_base_url: str = "http://localhost:11434"
+    ai_temperature_gemini: float = 0.6
+    ai_temperature_ollama: float = 0.3
+    gemini_api_key: str = ""
+
     # --- Rate Limiting ---
     rate_limit_per_minute: int = 5
     rate_limit_per_hour: int = 30
@@ -122,6 +131,13 @@ class AppConfig:
                 "pois": self.cache_ttl_pois,
                 "google_details": self.cache_ttl_google_details,
                 "google_nearby": self.cache_ttl_google_nearby,
+            },
+            "ai": {
+                "provider": self.ai_provider,
+                "model_gemini": self.ai_model_gemini,
+                "model_ollama": self.ai_model_ollama,
+                "ollama_base_url": self.ollama_base_url,
+                "has_gemini_key": bool(self.gemini_api_key),
             },
         }
 
@@ -246,6 +262,15 @@ def get_config() -> AppConfig:
             cache_ttl_pois=int(raw.get('CACHE_TTL_POIS', defaults.cache_ttl_pois)),
             cache_ttl_google_details=int(raw.get('CACHE_TTL_GOOGLE_DETAILS', defaults.cache_ttl_google_details)),
             cache_ttl_google_nearby=int(raw.get('CACHE_TTL_GOOGLE_NEARBY', defaults.cache_ttl_google_nearby)),
+
+            # AI Provider
+            ai_provider=raw.get('AI_PROVIDER', defaults.ai_provider),
+            ai_model_gemini=raw.get('AI_MODEL_GEMINI', defaults.ai_model_gemini),
+            ai_model_ollama=raw.get('AI_MODEL_OLLAMA', defaults.ai_model_ollama),
+            ollama_base_url=raw.get('OLLAMA_BASE_URL', defaults.ollama_base_url),
+            ai_temperature_gemini=float(raw.get('AI_TEMPERATURE_GEMINI', defaults.ai_temperature_gemini)),
+            ai_temperature_ollama=float(raw.get('AI_TEMPERATURE_OLLAMA', defaults.ai_temperature_ollama)),
+            gemini_api_key=raw.get('GEMINI_API_KEY', defaults.gemini_api_key),
         )
 
         return _config_instance

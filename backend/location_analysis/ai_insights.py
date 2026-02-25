@@ -1,23 +1,26 @@
 """
 AI-powered decision insights generator for location reports.
 
-Uses Gemini to generate human-readable consequence descriptions
-following the decision-first philosophy.
+Uses configurable AI provider (Gemini / Ollama / Off) to generate
+human-readable consequence descriptions following the decision-first philosophy.
 
 IMPORTANT: AI receives ONLY the AnalysisFactSheet (single source of truth).
 It never sees raw POI data or intermediate calculations.
 """
 import os
 import json
+import hashlib
 import logging
-from typing import Optional
+from typing import Optional, Dict
 from dataclasses import dataclass, field
 
-import google.generativeai as genai
-
 from .analysis_factsheet import AnalysisFactSheet
+from .ai_client import AIClient, AIClientError, create_ai_client
 
 logger = logging.getLogger(__name__)
+
+# Prompt version — bump when changing SYSTEM_PROMPT
+PROMPT_VERSION = "v2"
 
 
 @dataclass
@@ -112,29 +115,31 @@ SPÓJNOŚĆ:
 - Jeśli data_reason puste → NIE pisz "dane niepełne"
 - Jeśli penalties.roads_penalty >= 6 → NIE pisz "spokojna/cicha okolica"
 - Jeśli primary_blocker == "roads" → why_not_higher MUSI wspomnieć drogi
+
+Zwróć TYLKO JSON, bez żadnych dodatkowych znaków, komentarzy ani markdown.
+Jeśli nie potrafisz spełnić formatu, zwróć dokładnie: {}
 """
 
 
 class AIInsightGenerator:
-    """Generates human-readable decision insights using Gemini."""
+    """Generates human-readable decision insights using configurable AI provider."""
     
     def __init__(self):
-        api_key = os.getenv('GEMINI_API_KEY')
-        if not api_key:
-            logger.warning("GEMINI_API_KEY not set, AI insights will be unavailable")
-            self.model = None
-            return
-            
-        genai.configure(api_key=api_key)
-        self.model = genai.GenerativeModel(
-            model_name='gemini-2.0-flash',
-            generation_config={
-                'temperature': 0.6,  # Lower for more consistent output
-                'max_output_tokens': 800,
-                'response_mime_type': 'application/json',
-            },
-            system_instruction=SYSTEM_PROMPT
+        from .app_config import get_config
+        config = get_config()
+        
+        self.client: Optional[AIClient] = create_ai_client(
+            provider=config.ai_provider,
+            gemini_api_key=config.gemini_api_key,
+            gemini_model=config.ai_model_gemini,
+            gemini_temperature=config.ai_temperature_gemini,
+            ollama_base_url=config.ollama_base_url,
+            ollama_model=config.ai_model_ollama,
+            ollama_temperature=config.ai_temperature_ollama,
         )
+        
+        # In-memory AI response cache: hash(prompt+model) -> DecisionInsight
+        self._cache: Dict[str, DecisionInsight] = {}
     
     # Blacklist of generic phrases that indicate AI is confabulating
     BLACKLIST_PHRASES = [
@@ -151,6 +156,12 @@ class AIInsightGenerator:
         "ruchliwe drogi",
         "ruchliwych dróg",
     ]
+    
+    def _cache_key(self, prompt_data: dict) -> str:
+        """Generate cache key from prompt data + model name."""
+        model_name = self.client.model_name if self.client else "off"
+        content = json.dumps(prompt_data, sort_keys=True, ensure_ascii=False) + model_name + PROMPT_VERSION
+        return hashlib.md5(content.encode()).hexdigest()
     
     def generate_from_factsheet(
         self,
@@ -169,13 +180,25 @@ class AIInsightGenerator:
         # Always have fallback ready
         fallback = self._generate_fallback_tldr(factsheet)
         
-        if not self.model:
-            slog.degraded(kind="DEGRADED_PROVIDER", provider="gemini", reason="No AI model configured, using fallback", stage="ai")
+        if not self.client:
+            slog.degraded(kind="DEGRADED_PROVIDER", provider="ai", reason="AI provider is OFF, using fallback", stage="ai")
             return fallback
+        
+        provider_name = self.client.provider_name
+        model_name = self.client.model_name
         
         try:
             # Convert factsheet to AI-safe JSON
             prompt_data = factsheet.to_ai_prompt_json()
+            
+            # Check cache first
+            cache_key = self._cache_key(prompt_data)
+            if cache_key in self._cache:
+                slog.info(
+                    stage="ai", provider=provider_name, op="cache_hit",
+                    meta={"model": model_name, "prompt_version": PROMPT_VERSION, "ai_cache_used": True}
+                )
+                return self._cache[cache_key]
             
             prompt = f"""
 Wygeneruj insights dla tego raportu lokalizacyjnego.
@@ -183,12 +206,18 @@ Wygeneruj insights dla tego raportu lokalizacyjnego.
 DANE (to jest JEDYNE źródło prawdy - nie wymyślaj innych faktów):
 {json.dumps(prompt_data, ensure_ascii=False, indent=2)}
 """
-            token = slog.req_start(provider="gemini", op="generate_content", stage="ai")
-            response = self.model.generate_content(prompt)
-            slog.req_end(provider="gemini", op="generate_content", stage="ai", status="ok", request_token=token)
+            token = slog.req_start(provider=provider_name, op="generate_json", stage="ai")
+            data = self.client.generate_json(SYSTEM_PROMPT, prompt)
+            slog.req_end(
+                provider=provider_name, op="generate_json", stage="ai", status="ok",
+                request_token=token,
+                meta={"model": model_name, "prompt_version": PROMPT_VERSION, "ai_cache_used": False}
+            )
             
-            # Parse JSON response
-            data = json.loads(response.text)
+            # Handle empty response from local model
+            if not data:
+                slog.warning(stage="ai", provider=provider_name, op="empty_response", message="AI returned empty JSON, using fallback")
+                return fallback
             
             # POST-FILTER: Sanitize declarative noise/quiet claims
             if factsheet.noise_source != "measurement":
@@ -197,19 +226,37 @@ DANE (to jest JEDYNE źródło prawdy - nie wymyślaj innych faktów):
             # VALIDATE AI output
             validation_errors = self._validate_ai_output(data, factsheet)
             if validation_errors:
-                slog.warning(stage="ai", provider="gemini", op="validation", status="failed", error_class="logic", message="Using fallback", meta={"errors": validation_errors})
+                slog.warning(
+                    stage="ai", provider=provider_name, op="validation", status="failed",
+                    error_class="logic", message="Using fallback",
+                    meta={"errors": validation_errors, "model": model_name}
+                )
                 return fallback
             
-            # Extract from new schema (tldr removed)
-            
-            return DecisionInsight(
+            result = DecisionInsight(
                 summary=data.get('summary', fallback.summary),
                 check_on_site=data.get('check_on_site', fallback.check_on_site)[:3],
                 why_not_higher=data.get('why_not_higher', fallback.why_not_higher),
             )
             
+            # Cache successful result
+            self._cache[cache_key] = result
+            
+            return result
+            
+        except AIClientError as e:
+            slog.error(
+                stage="ai", provider=provider_name, op="generate_json",
+                message=str(e), exc="AIClientError", error_class="runtime",
+                hint=f"{provider_name} failed, using fallback"
+            )
+            return fallback
         except Exception as e:
-            slog.error(stage="ai", provider="gemini", op="generate_content", message=str(e), exc=type(e).__name__, error_class="runtime", hint="Gemini API call failed, using deterministic fallback")
+            slog.error(
+                stage="ai", provider=provider_name, op="generate_json",
+                message=str(e), exc=type(e).__name__, error_class="runtime",
+                hint=f"{provider_name} call failed, using deterministic fallback"
+            )
             return fallback
     
     def _validate_ai_output(self, data: dict, factsheet: AnalysisFactSheet) -> list[str]:
@@ -269,11 +316,11 @@ DANE (to jest JEDYNE źródło prawdy - nie wymyślaj innych faktów):
         # Why not higher
         why_not_higher = factsheet.primary_blocker_detail or factsheet.verdict_reason or ""
         
-        # Check on site - generic but actionable
+        # Check on site - data-driven, actionable
         check_on_site = [
-            "Zweryfikuj poziom hałasu w godzinach szczytu (8:00, 17:00)",
-            "Sprawdź nasłonecznienie mieszkania o różnych porach",
-            "Oceń stan klatki schodowej i wejścia do budynku",
+            "Stań przy oknie na 2 minuty w szczycie komunikacyjnym (16-18)",
+            "Sprawdź nasłonecznienie mieszkania o różnych porach dnia",
+            "Włącz Google Maps i sprawdź natężenie ruchu o 8:00 i 17:00",
         ]
         
         return DecisionInsight(

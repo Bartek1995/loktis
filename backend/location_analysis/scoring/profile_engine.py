@@ -32,6 +32,7 @@ class POIContribution:
     distance_score: float      # Score z krzywej spadku (0-100)
     quality_multiplier: float  # Mnożnik jakości (0.85-1.15)
     final_contribution: float  # distance_score * quality_multiplier * weight_factor
+    subcategory: str = ""      # e.g. bus_stop, platform, pharmacy
     rating: Optional[float] = None
     reviews: Optional[int] = None
 
@@ -70,6 +71,7 @@ class CategoryScoreResult:
             'top_pois': [
                 {
                     'name': c.name,
+                    'subcategory': c.subcategory,
                     'distance_m': c.distance_m,
                     'score': round(c.final_contribution, 1),
                     'rating': c.rating,
@@ -481,6 +483,7 @@ class ProfileScoringEngine:
                 distance_score=dist_score,
                 quality_multiplier=quality_mult * nameless_mult,
                 final_contribution=contribution,
+                subcategory=poi.subcategory or '',
                 rating=poi.tags.get('rating'),
                 reviews=poi.tags.get('user_ratings_total'),
             ))

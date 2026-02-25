@@ -205,6 +205,15 @@ LOKTIS_CONFIG = {
     'CACHE_TTL_POIS': int(os.getenv('CACHE_TTL_POIS', '604800')),
     'CACHE_TTL_GOOGLE_DETAILS': int(os.getenv('CACHE_TTL_GOOGLE_DETAILS', '604800')),
     'CACHE_TTL_GOOGLE_NEARBY': int(os.getenv('CACHE_TTL_GOOGLE_NEARBY', '259200')),
+
+    # --- AI Provider ---
+    'AI_PROVIDER': os.getenv('AI_PROVIDER', 'ollama'),
+    'AI_MODEL_GEMINI': os.getenv('AI_MODEL_GEMINI', 'gemini-2.0-flash'),
+    'AI_MODEL_OLLAMA': os.getenv('AI_MODEL_OLLAMA', 'qwen2.5:7b-instruct'),
+    'OLLAMA_BASE_URL': os.getenv('OLLAMA_BASE_URL', 'http://localhost:11434'),
+    'AI_TEMPERATURE_GEMINI': os.getenv('AI_TEMPERATURE_GEMINI', '0.6'),
+    'AI_TEMPERATURE_OLLAMA': os.getenv('AI_TEMPERATURE_OLLAMA', '0.3'),
+    'GEMINI_API_KEY': os.getenv('GEMINI_API_KEY', ''),
 }
 
 

@@ -213,9 +213,21 @@ def calculate_confidence(
             cov = coverage.get(cat)
             if cov and cov.status == "empty":
                 signal_confidence -= 15
-                reasons.append(f"Brak obiektów: {_category_name(cat)} w promieniu {cov.radius_m}m")
+                reasons.append(f"Brak obiektów: {_category_name(cat)} w promieniu {cov.radius_m}m (waga {weight:.0%})")
             elif cov and cov.status == "partial" and cov.kept_count < 2:
                 signal_confidence -= 5
+                reasons.append(f"Mało danych: {_category_name(cat)} ({cov.kept_count} POI, waga {weight:.0%})")
+            # Type diversity: if a high-weight category has >80% single subtype, flag it
+            if cov and cov.subcategory_distribution:
+                total_pois = sum(cov.subcategory_distribution.values())
+                if total_pois >= 3:
+                    dominant_type = max(cov.subcategory_distribution.values())
+                    if dominant_type / total_pois > 0.8:
+                        dominant_name = max(cov.subcategory_distribution, key=cov.subcategory_distribution.get)
+                        signal_confidence -= 3
+                        reasons.append(
+                            f"Niska różnorodność: {_category_name(cat)} — {dominant_type}/{total_pois} to {dominant_name}"
+                        )
     
     # Clamp components
     provider_confidence = max(0, min(100, provider_confidence))
