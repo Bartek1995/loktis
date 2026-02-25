@@ -111,6 +111,17 @@ class AnalyzeLocationRequestSerializer(serializers.Serializer):
         default=dict,
         help_text="Nadpisanie promieni per kategoria (np. {'shops': 800})"
     )
+    # Google API cost control flags
+    enable_enrichment = serializers.BooleanField(
+        required=False,
+        default=False,
+        help_text="Włącz Google enrichment (rating/reviews) — kosztowne, domyślnie wyłączone"
+    )
+    enable_fallback = serializers.BooleanField(
+        required=False,
+        default=True,
+        help_text="Włącz Google fallback dla pustych kategorii (Nearby Search)"
+    )
 
 
 

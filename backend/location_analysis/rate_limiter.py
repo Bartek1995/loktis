@@ -102,11 +102,19 @@ class RateLimiter:
         return request.META.get('REMOTE_ADDR', 'unknown')
 
 
-# Globalna instancja
-rate_limiter = RateLimiter(
-    requests_per_minute=5,
-    requests_per_hour=30
-)
+# Globalna instancja — limity z centralnej konfiguracji
+def _create_rate_limiter() -> RateLimiter:
+    try:
+        from .app_config import get_config
+        config = get_config()
+        return RateLimiter(
+            requests_per_minute=config.rate_limit_per_minute,
+            requests_per_hour=config.rate_limit_per_hour,
+        )
+    except Exception:
+        return RateLimiter(requests_per_minute=5, requests_per_hour=30)
+
+rate_limiter = _create_rate_limiter()
 
 
 def rate_limit(limiter: RateLimiter = None):

@@ -53,15 +53,16 @@ class POI:
 class OverpassClient:
     """Klient do pobierania danych z OSM."""
     
-    # Lista publicznych instancji Overpass API (Load Balancer)
-    ENDPOINTS = [
-        "https://overpass-api.de/api/interpreter",
-        "https://lz4.overpass-api.de/api/interpreter",
-        "https://z.overpass-api.de/api/interpreter",
-        "https://maps.mail.ru/osm/tools/overpass/api/interpreter", 
-    ]
+    # Maksymalna liczba kategorii per POI (primary + secondary)
+    MAX_CATEGORIES_PER_POI = 2
+    SECONDARY_SCORE_RATIO = 0.7
     
-    TIMEOUT = 60 # Zwiększony timeout dla dużego zapytania
+    def __init__(self):
+        from ..app_config import get_config
+        config = get_config()
+        self.ENDPOINTS = config.overpass_endpoints
+        self.TIMEOUT = config.overpass_timeout
+        self._current_endpoint_idx = 0
     
     # Konfiguracja kategorii (zachowujemy strukturę dla subkategorii i nazw)
     POI_QUERIES = {
@@ -235,12 +236,6 @@ class OverpassClient:
         },
     }
 
-    # Maksymalna liczba kategorii per POI (primary + secondary)
-    MAX_CATEGORIES_PER_POI = 2
-    SECONDARY_SCORE_RATIO = 0.7
-    
-    def __init__(self):
-        self._current_endpoint_idx = 0
 
     def _classify_tags(self, tags: dict) -> Dict[str, float]:
         """Zwraca scoring kategorii na podstawie tagów."""

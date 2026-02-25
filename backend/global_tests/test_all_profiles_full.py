@@ -43,9 +43,9 @@ ALL_PROFILES = [
 ]
 
 # Domyślna lokalizacja testowa
-DEFAULT_LAT = 51.277
-DEFAULT_LON = 17.235
-DEFAULT_ADDRESS = "1 Maja 11, Wiazow"
+DEFAULT_LAT = 50.944937
+DEFAULT_LON = 17.3075451
+DEFAULT_ADDRESS = "Oława"
 
 
 # ============================================================================
@@ -157,6 +157,7 @@ def run_profile(
         "radius": 500,
         "profile_key": profile_key,
         "poi_provider": "hybrid",
+        "enable_enrichment": False,  # Disable expensive Google enrichment in tests
     }
     if not use_cache:
         body["use_cache"] = False
@@ -553,6 +554,8 @@ def main():
 
             results = []
             for i, profile_key in enumerate(profiles, 1):
+                if i > 1:
+                    time.sleep(1.0)  # Avoid 429 between profiles
                 out.write(f"\n[{i}/{len(profiles)}] ")
                 result = run_profile(
                     session=session,

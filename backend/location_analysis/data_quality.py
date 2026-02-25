@@ -211,7 +211,7 @@ def calculate_confidence(
             cov = coverage.get(cat)
             if cov and cov.status == "empty":
                 confidence -= 10
-                reasons.append(f"Brak danych: {_category_name(cat)} (ważna dla profilu)")
+                reasons.append(f"Brak obiektów: {_category_name(cat)} w promieniu {cov.radius_m}m")
     
     # Clamp
     confidence = max(0, min(100, confidence))

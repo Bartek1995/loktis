@@ -33,7 +33,7 @@ VALID_GOOGLE_TYPES = frozenset({
     # Education
     'school', 'primary_school', 'secondary_school', 'university', 'library',
     # Health
-    'pharmacy', 'hospital', 'doctor', 'dentist', 'health',
+    'pharmacy', 'hospital', 'doctor', 'dentist',
     'physiotherapist', 'veterinary_care',
     # Nature
     'park', 'natural_feature', 'campground',
@@ -103,7 +103,7 @@ GOOGLE_TO_CATEGORY = {
     # Food
     'restaurant': ('food', 'restaurant'),
     'cafe': ('food', 'cafe'),
-    'fast_food': ('food', 'fast_food'),
+    # NOTE: 'fast_food' is NOT a valid Google type — removed
     'bar': ('food', 'bar'),
     'meal_delivery': ('food', 'delivery'),
     'meal_takeaway': ('food', 'takeaway'),
@@ -114,8 +114,8 @@ GOOGLE_TO_CATEGORY = {
 }
 
 BADGE_TYPE_WHITELIST = {
-    'cafe', 'bakery', 'restaurant', 'fast_food', 'meal_takeaway', 'bar',
-    'atm', 'bank', 'pharmacy', 'hospital', 'doctor', 'dentist', 'health',
+    'cafe', 'bakery', 'restaurant', 'meal_takeaway', 'bar',
+    'atm', 'bank', 'pharmacy', 'hospital', 'doctor', 'dentist',
     'gym', 'stadium', 'amusement_park', 'bowling_alley', 'movie_theater', 'spa',
     'park', 'natural_feature', 'campground',
     'supermarket', 'convenience_store', 'shopping_mall', 'store',
@@ -124,9 +124,9 @@ BADGE_TYPE_WHITELIST = {
 }
 
 SECONDARY_BY_GOOGLE_TYPE = [
-    ('food', {'cafe', 'bakery', 'restaurant', 'fast_food', 'meal_takeaway', 'bar'}),
+    ('food', {'cafe', 'bakery', 'restaurant', 'meal_takeaway', 'bar'}),
     ('finance', {'atm', 'bank'}),
-    ('health', {'pharmacy', 'hospital', 'doctor', 'dentist', 'health'}),
+    ('health', {'pharmacy', 'hospital', 'doctor', 'dentist'}),
     ('leisure', {'gym', 'stadium', 'amusement_park', 'bowling_alley', 'movie_theater', 'spa'}),
     ('nature_place', {'park', 'natural_feature', 'campground'}),
     ('shops', {'supermarket', 'convenience_store', 'shopping_mall', 'store'}),
@@ -185,11 +185,15 @@ class GooglePlacesClient:
         'finance': ['bank', 'atm'],
     }
     
-    MAX_RETRIES = 2
+    MAX_RETRIES = 2  # fallback, overridden in __init__
     
     def __init__(self, api_key: Optional[str] = None):
-        """Inicjalizacja z kluczem API."""
-        self.api_key = api_key or os.environ.get('GOOGLE_PLACES_API_KEY')
+        """Inicjalizacja z kluczem API (z config lub explicite)."""
+        from ..app_config import get_config
+        config = get_config()
+        self.api_key = api_key or config.google_places_api_key or os.environ.get('GOOGLE_PLACES_API_KEY')
+        self.MAX_RETRIES = config.google_max_retries
+        self._enabled = config.google_places_enabled
         if not self.api_key:
             logger.warning("GOOGLE_PLACES_API_KEY not set!")
     

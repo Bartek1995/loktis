@@ -32,14 +32,14 @@ class EnrichmentConfig:
 # Domyślna konfiguracja enrichment per kategoria
 # max_distance_m zwiększone bo OSM i Google mają często przesunięcia 50-100m
 DEFAULT_ENRICHMENT_CONFIG = {
-    'shops': EnrichmentConfig(top_k=5, enrich=True, max_distance_m=120, search_radius_m=120),
-    'education': EnrichmentConfig(top_k=3, enrich=True, max_distance_m=120, search_radius_m=120),
-    'health': EnrichmentConfig(top_k=3, enrich=True, max_distance_m=120, search_radius_m=120),
-    'food': EnrichmentConfig(top_k=3, enrich=True, max_distance_m=150, search_radius_m=150),
+    'shops': EnrichmentConfig(top_k=5, enrich=False, max_distance_m=120, search_radius_m=120),
+    'education': EnrichmentConfig(top_k=3, enrich=False, max_distance_m=120, search_radius_m=120),
+    'health': EnrichmentConfig(top_k=3, enrich=False, max_distance_m=120, search_radius_m=120),
+    'food': EnrichmentConfig(top_k=3, enrich=False, max_distance_m=150, search_radius_m=150),
     'transport': EnrichmentConfig(top_k=3, enrich=False),  # OSM wystarczy
-    'nature_place': EnrichmentConfig(top_k=2, enrich=True, max_distance_m=150, search_radius_m=150),  # Parki
+    'nature_place': EnrichmentConfig(top_k=2, enrich=False, max_distance_m=150, search_radius_m=150),
     'nature_background': EnrichmentConfig(top_k=0, enrich=False),  # Metryki, nie POI
-    'leisure': EnrichmentConfig(top_k=3, enrich=True, max_distance_m=80, search_radius_m=80),
+    'leisure': EnrichmentConfig(top_k=3, enrich=False, max_distance_m=80, search_radius_m=80),
     'finance': EnrichmentConfig(top_k=2, enrich=False),
 }
 
@@ -47,7 +47,7 @@ DEFAULT_ENRICHMENT_CONFIG = {
 FALLBACK_TYPES = {
     'shops': ['supermarket', 'convenience_store', 'store'],
     'education': ['school'],
-    'health': ['pharmacy', 'hospital', 'doctor', 'dentist', 'health'],
+    'health': ['pharmacy', 'hospital', 'doctor', 'dentist'],
     'transport': ['bus_station', 'transit_station', 'train_station'],
     'food': ['restaurant', 'cafe', 'bakery', 'meal_takeaway'],
     'finance': ['bank', 'atm'],
@@ -120,7 +120,7 @@ class HybridPOIProvider:
         lon: float,
         radius_m: int = 500,
         radius_by_category: Optional[Dict[str, int]] = None,
-        enable_enrichment: bool = True,
+        enable_enrichment: bool = False,
         enable_fallback: bool = True,
         trace_ctx: 'AnalysisTraceContext | None' = None,
     ) -> Tuple[Dict[str, List[POI]], Dict[str, Any]]:
@@ -305,6 +305,12 @@ class HybridPOIProvider:
                 if poi.tags.get('rating'):
                     continue
                 
+                # Check negative cache — skip POIs already known to be missing in Google
+                neg_key = f"notfound:{poi.name}:{round(poi.lat,3)}:{round(poi.lon,3)}"
+                if google_details_cache.get(neg_key):
+                    slog.debug(stage="geo", provider="google", op="enrich_skip_notfound", meta={"name": poi.name})
+                    continue
+                
                 # Smart generic names handling
                 name_lower = poi.name.lower().strip()
                 is_generic = name_lower in GENERIC_NAMES or poi.tags.get('_nameless')
@@ -389,8 +395,7 @@ class HybridPOIProvider:
                         google_lon = google_geom.get('lng')
                         
                         if google_lat and google_lon:
-                            from .overpass_client import OverpassClient
-                            distance_to_google = OverpassClient()._haversine_distance(
+                            distance_to_google = self.google._haversine_distance(
                                 poi.lat, poi.lon, google_lat, google_lon
                             )
                             # Używamy per-category max distance

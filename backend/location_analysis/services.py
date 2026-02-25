@@ -173,6 +173,8 @@ class AnalysisService:
         poi_provider: str = 'overpass',
         profile_key: str = None,  # Nowy parametr - klucz profilu
         radius_overrides: Dict[str, int] = None,  # User-defined radius per category
+        enable_enrichment: bool = False,  # Google enrichment (rating/reviews) — kosztowne
+        enable_fallback: bool = True,  # Google fallback dla pustych kategorii
     ):
         """
         Generator analizy lokalizacji (location-first model).
@@ -262,6 +264,8 @@ class AnalysisService:
                     provider=poi_provider,
                     radius_by_category=effective_radius_m,  # Pass per-category radius!
                     trace_ctx=ctx,
+                    enable_enrichment=enable_enrichment,
+                    enable_fallback=enable_fallback,
                 )
                 geo_dur = ctx.end_stage("geo")
                 slog.info(stage="geo", op="get_pois", provider=poi_provider, duration_ms=geo_dur, meta={"cache_used": poi_cache_used})
@@ -461,6 +465,8 @@ class AnalysisService:
         provider: str = 'hybrid',
         radius_by_category: Dict[str, int] = None,  # NEW: per-category radius
         trace_ctx: 'AnalysisTraceContext | None' = None,
+        enable_enrichment: bool = False,
+        enable_fallback: bool = True,
     ) -> tuple:
         """
         Pobiera POI i metryki (z cache jeśli dostępne).
@@ -469,6 +475,8 @@ class AnalysisService:
             provider: 'overpass', 'google', lub 'hybrid' (domyślny)
             radius_by_category: Per-category radius limits for filtering
             trace_ctx: Optional trace context for structured logging
+            enable_enrichment: Enable Google enrichment (expensive)
+            enable_fallback: Enable Google fallback for empty categories
         
         Returns:
             tuple: (pois_by_category, metrics)
@@ -476,25 +484,28 @@ class AnalysisService:
         # Normalizuj koordynaty dla lepszego cache hit rate (~11m grid)
         norm_lat, norm_lon = normalize_coords(lat, lon, precision=4)
         
-        # Include radius_by_category in cache key if provided
-        cache_suffix = ""
-        if radius_by_category:
-            # Create stable hash for category radii
-            sorted_items = sorted(radius_by_category.items())
-            cache_suffix = "|" + "|".join(f"{k}:{v}" for k, v in sorted_items)
-        cache_key = TTLCache.make_key('pois', norm_lat, norm_lon, radius, provider) + cache_suffix
+        # Cache key uses fetch_radius (max radius), NOT per-profile radii
+        # This ensures different profiles reuse cached geo data for same location
+        cache_key = TTLCache.make_key('pois', norm_lat, norm_lon, radius, provider)
         
         if use_cache:
             cached = overpass_cache.get(cache_key)
             if cached:
                 logger.debug("POI cache hit (%s): (%s, %s) r=%s", provider, norm_lat, norm_lon, radius)
-                return cached[0], cached[1], True  # pois, metrics, cache_used=True
+                # Apply per-category radius filter on cached data
+                pois, metrics = cached[0], cached[1]
+                if radius_by_category:
+                    from .geo.poi_filter import filter_by_radius
+                    pois = filter_by_radius(pois, radius_by_category, default_radius=radius)
+                return pois, metrics, True  # pois, metrics, cache_used=True
         
         # Wybór klienta
         if provider == 'hybrid':
             pois, metrics = self.hybrid_provider.get_pois_hybrid(
                 lat, lon, radius,
                 radius_by_category=radius_by_category,  # Pass per-category radius!
+                enable_enrichment=enable_enrichment,
+                enable_fallback=enable_fallback,
                 trace_ctx=trace_ctx,
             )
         elif provider == 'google':

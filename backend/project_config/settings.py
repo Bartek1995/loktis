@@ -158,6 +158,54 @@ CORS_ALLOWED_ORIGINS = [
 # Allow all origins (development) - disable in production via env var
 CORS_ALLOW_ALL_ORIGINS = os.getenv('CORS_ALLOW_ALL', 'True').lower() in ('true', '1', 'yes')
 
+
+# =============================================================================
+# NEST SCORE — Centralna konfiguracja aplikacji
+# Wartości czytane przez location_analysis.app_config.get_config()
+# =============================================================================
+NEST_SCORE_CONFIG = {
+    # --- Overpass API ---
+    'OVERPASS_URL': os.getenv('OVERPASS_URL', 'https://overpass-api.de/api/interpreter'),
+    'OVERPASS_FALLBACK_URLS': os.getenv(
+        'OVERPASS_FALLBACK_URLS',
+        'https://lz4.overpass-api.de/api/interpreter,https://z.overpass-api.de/api/interpreter,https://maps.mail.ru/osm/tools/overpass/api/interpreter'
+    ),
+    'OVERPASS_TIMEOUT': int(os.getenv('OVERPASS_TIMEOUT', '60')),
+
+    # --- Google Places API ---
+    'GOOGLE_PLACES_ENABLED': os.getenv('GOOGLE_PLACES_ENABLED', 'true'),
+    'GOOGLE_PLACES_API_KEY': os.getenv('GOOGLE_PLACES_API_KEY', ''),
+    'GOOGLE_MAX_RETRIES': int(os.getenv('GOOGLE_MAX_RETRIES', '2')),
+
+    # --- Domyślne flagi analizy ---
+    'DEFAULT_ENRICHMENT': os.getenv('DEFAULT_ENRICHMENT', 'false'),
+    'DEFAULT_FALLBACK': os.getenv('DEFAULT_FALLBACK', 'true'),
+    'DEFAULT_POI_PROVIDER': os.getenv('DEFAULT_POI_PROVIDER', 'hybrid'),
+    'DEFAULT_RADIUS': int(os.getenv('DEFAULT_RADIUS', '500')),
+
+    # --- Sekcje raportu (toggles) ---
+    'REPORT_AIR_QUALITY': os.getenv('REPORT_AIR_QUALITY', 'true'),
+    'REPORT_NOISE_ANALYSIS': os.getenv('REPORT_NOISE_ANALYSIS', 'false'),
+    'REPORT_AI_INSIGHTS': os.getenv('REPORT_AI_INSIGHTS', 'true'),
+    'REPORT_NATURE_METRICS': os.getenv('REPORT_NATURE_METRICS', 'true'),
+    'REPORT_DATA_QUALITY': os.getenv('REPORT_DATA_QUALITY', 'true'),
+
+    # --- Air Quality ---
+    'AIR_QUALITY_PROVIDER': os.getenv('AIR_QUALITY_PROVIDER', 'open_meteo'),
+    'AIR_QUALITY_ENABLED': os.getenv('AIR_QUALITY_ENABLED', 'true'),
+
+    # --- Rate Limiting ---
+    'RATE_LIMIT_PER_MINUTE': int(os.getenv('RATE_LIMIT_PER_MINUTE', '5')),
+    'RATE_LIMIT_PER_HOUR': int(os.getenv('RATE_LIMIT_PER_HOUR', '30')),
+
+    # --- Cache TTLs (sekundy) ---
+    'CACHE_TTL_LISTING': int(os.getenv('CACHE_TTL_LISTING', '3600')),
+    'CACHE_TTL_POIS': int(os.getenv('CACHE_TTL_POIS', '604800')),
+    'CACHE_TTL_GOOGLE_DETAILS': int(os.getenv('CACHE_TTL_GOOGLE_DETAILS', '604800')),
+    'CACHE_TTL_GOOGLE_NEARBY': int(os.getenv('CACHE_TTL_GOOGLE_NEARBY', '259200')),
+}
+
+
 # Security settings for production
 if not DEBUG:
     SECURE_SSL_REDIRECT = True
