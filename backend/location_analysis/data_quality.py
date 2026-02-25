@@ -27,7 +27,8 @@ class CategoryCoverage:
     status: str = "empty"
     raw_count: int = 0  # Before filters
     kept_count: int = 0  # After filters
-    radius_m: int = 1000
+    radius_m: int = 0
+    subcategory_distribution: Dict[str, int] = field(default_factory=dict)  # e.g. {'bus_stop': 5, 'platform': 3}
     rejects: Dict[str, int] = field(default_factory=dict)  # {"radius": 30, "membership": 4}
     provider_errors: List[str] = field(default_factory=list)  # ["timeout_504"]
     had_provider_error: bool = False  # Was there any error before fallback?
@@ -39,6 +40,7 @@ class CategoryCoverage:
             "raw_count": self.raw_count,
             "kept_count": self.kept_count,
             "radius_m": self.radius_m,
+            "subcategory_distribution": self.subcategory_distribution,
             "rejects": self.rejects,
             "provider_errors": self.provider_errors,
             "had_provider_error": self.had_provider_error,
@@ -64,6 +66,7 @@ class DataQualityReport:
     fallback_contributed: List[str] = field(default_factory=list)  # Categories where fallback added POIs
     coverage: Dict[str, CategoryCoverage] = field(default_factory=dict)
     cache_used: bool = False
+    confidence_components: Dict[str, int] = field(default_factory=dict)  # provider/data/signal breakdown
     
     # Derived lists for easy access
     empty_categories: List[str] = field(default_factory=list)  # Signal zeros
@@ -78,6 +81,7 @@ class DataQualityReport:
             "fallback_started": self.fallback_started,
             "fallback_contributed": self.fallback_contributed,
             "cache_used": self.cache_used,
+            "confidence_components": self.confidence_components,
             "empty_categories": self.empty_categories,
             "error_categories": self.error_categories,
             "coverage": {k: v.to_dict() for k, v in self.coverage.items()},
@@ -163,60 +167,72 @@ def calculate_confidence(
     overpass_status: str,
     important_categories: List[str] = None,
     profile_weights: Dict[str, float] = None,
-) -> tuple[int, List[str]]:
+) -> tuple[int, List[str], Dict[str, int]]:
     """
-    Calculate confidence based on DATA QUALITY issues only.
+    Calculate confidence based on DATA QUALITY issues.
     
-    DOES NOT penalize 'empty' status - that's a signal, not an error.
-    ONLY penalizes 'error' status and provider failures.
+    Returns decomposed confidence:
+    - provider_confidence: Did providers respond? (overpass status)
+    - data_confidence: Did we get data? (category errors)
+    - signal_confidence: Is the signal meaningful? (empty critical cats, diversity)
     
-    NEW: If profile_weights is provided, penalizes empty categories that
-    are CRITICAL for the active profile (weight >= 0.10).
+    Total = weighted combination of all three.
     """
     if important_categories is None:
         important_categories = ["shops", "transport", "education", "health", "nature_place"]
     
-    confidence = 100
     reasons = []
     
-    # Provider-level errors (these are real data quality issues)
+    # --- Provider confidence ---
+    provider_confidence = 100
     if overpass_status == "timeout":
-        confidence -= 15
+        provider_confidence -= 15
         reasons.append("Opóźniona odpowiedź OSM (retry wykonano)")
     elif overpass_status == "error":
-        confidence -= 30
+        provider_confidence -= 30
         reasons.append("Błąd pobierania danych OSM")
     
-    # Category-level errors ONLY (not empty!)
+    # --- Data confidence ---
+    data_confidence = 100
     for cat in important_categories:
         cov = coverage.get(cat)
         if not cov:
             continue
-        
-        # ONLY penalize actual errors, not empty signals
         if cov.status == "error":
-            confidence -= 20
+            data_confidence -= 20
             reasons.append(f"Brak danych: {_category_name(cat)} (błąd źródła)")
-        
-        # Note: 'empty' is NOT penalized - it's valid signal
-        # Note: 'partial' is NOT penalized - sparse data is still valid
     
-    # Profile-aware: empty category with high weight = lower confidence
+    # --- Signal confidence ---
+    signal_confidence = 100
     if profile_weights:
         all_cats = set(important_categories) | set(profile_weights.keys())
         for cat in all_cats:
             weight = abs(profile_weights.get(cat, 0))
             if weight < 0.10:
-                continue  # Only care about categories with ≥10% weight
+                continue
             cov = coverage.get(cat)
             if cov and cov.status == "empty":
-                confidence -= 10
+                signal_confidence -= 15
                 reasons.append(f"Brak obiektów: {_category_name(cat)} w promieniu {cov.radius_m}m")
+            elif cov and cov.status == "partial" and cov.kept_count < 2:
+                signal_confidence -= 5
     
-    # Clamp
-    confidence = max(0, min(100, confidence))
+    # Clamp components
+    provider_confidence = max(0, min(100, provider_confidence))
+    data_confidence = max(0, min(100, data_confidence))
+    signal_confidence = max(0, min(100, signal_confidence))
     
-    return confidence, reasons[:5]
+    # Total: weighted combination
+    total = int(0.4 * provider_confidence + 0.3 * data_confidence + 0.3 * signal_confidence)
+    total = max(0, min(100, total))
+    
+    components = {
+        'provider_confidence': provider_confidence,
+        'data_confidence': data_confidence,
+        'signal_confidence': signal_confidence,
+    }
+    
+    return total, reasons[:5], components
 
 
 def _category_name(cat: str) -> str:
@@ -300,12 +316,19 @@ def build_data_quality_report(
         else:
             cat_status = determine_status(kept_count, raw, had_error)
         
+        # Build subcategory distribution (Phase 6)
+        subcategory_dist = {}
+        for poi in pois:
+            sub = getattr(poi, 'subcategory', None) or 'unknown'
+            subcategory_dist[sub] = subcategory_dist.get(sub, 0) + 1
+        
         coverage[cat] = CategoryCoverage(
             source=source,
             status=cat_status,
             raw_count=raw,
             kept_count=kept_count,
             radius_m=radii.get(cat, 1000),
+            subcategory_distribution=subcategory_dist,
             rejects=rejects,
             provider_errors=cat_errors,
             had_provider_error=had_error,
@@ -317,8 +340,10 @@ def build_data_quality_report(
         elif cat_status == "error":
             error_categories.append(cat)
     
-    # Calculate confidence (only penalizes errors, not empty — unless profile-critical)
-    confidence, reasons = calculate_confidence(coverage, overpass_status, profile_weights=profile_weights)
+    # Calculate confidence with decomposition
+    confidence, reasons, confidence_components = calculate_confidence(
+        coverage, overpass_status, profile_weights=profile_weights
+    )
     
     report = DataQualityReport(
         confidence_pct=confidence,
@@ -329,6 +354,7 @@ def build_data_quality_report(
         fallback_contributed=fallback_contributed or [],
         coverage=coverage,
         cache_used=cache_used,
+        confidence_components=confidence_components,
         empty_categories=empty_categories,
         error_categories=error_categories,
     )

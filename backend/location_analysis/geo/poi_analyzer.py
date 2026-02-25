@@ -13,6 +13,7 @@ class NeighborhoodScore:
     total_score: float  # 0-100
     category_scores: Dict[str, float] = field(default_factory=dict)
     quiet_score: Optional[float] = None
+    quiet_debug: Dict[str, Any] = field(default_factory=dict)
     summary: str = ""
     details: Dict[str, Any] = field(default_factory=dict)
     
@@ -21,6 +22,7 @@ class NeighborhoodScore:
             'total_score': round(self.total_score, 1),
             'category_scores': {k: round(v, 1) for k, v in self.category_scores.items()},
             'quiet_score': round(self.quiet_score, 1) if self.quiet_score is not None else None,
+            'quiet_debug': self.quiet_debug,
             'summary': self.summary,
             'details': self.details,
         }
@@ -96,8 +98,8 @@ class POIAnalyzer:
             for cat, weight in self.CATEGORY_WEIGHTS.items()
         )
         
-        # Oblicz Quiet Score (z metrykami jeśli dostępne)
-        quiet_score = self._calculate_quiet_score(pois_by_category, metrics)
+        # Oblicz Quiet Score (z metrykami jeśli dostępne) — z breakdown
+        quiet_score, quiet_debug = self._calculate_quiet_score(pois_by_category, metrics)
         
         # Generuj podsumowanie
         summary = self._generate_summary(total_score, category_scores, pois_by_category)
@@ -106,6 +108,7 @@ class POIAnalyzer:
             total_score=total_score,
             category_scores=category_scores,
             quiet_score=quiet_score,
+            quiet_debug=quiet_debug,
             summary=summary,
             details={
                 **details,
@@ -118,9 +121,15 @@ class POIAnalyzer:
         self,
         pois_by_category: Dict[str, List[POI]],
         metrics: Optional[Dict[str, Any]] = None
-    ) -> float:
-        """Oblicza indeks spokoju (0-100)."""
-        score = 60.0 # Baza: umiarkowanie spokojnie
+    ) -> tuple:
+        """
+        Oblicza indeks spokoju (0-100) z pełnym breakdown.
+        
+        Returns:
+            tuple: (score, components_dict)
+        """
+        components = {'base': 60.0}
+        score = 60.0
 
         # Plusy: Zieleń - teraz z metryk zamiast listy POI
         nature_metrics = metrics.get('nature', {}) if metrics else {}
@@ -128,65 +137,103 @@ class POIAnalyzer:
         
         # Bonus za gęstość zieleni (zastępuje stary bonus za nature POI)
         if green_density >= 15:
-            score += 25  # Wysoka zieleń
+            green_bonus = 25
         elif green_density >= 5:
-            score += 15  # Średnia zieleń
+            green_bonus = 15
         elif green_density >= 1:
-            score += 5   # Niska zieleń
+            green_bonus = 5
+        else:
+            green_bonus = 0
+        components['green_density_bonus'] = green_bonus
+        components['green_density_value'] = green_density
+        score += green_bonus
         
         # Bonus za bliskość parku (z metryk)
         nearest_park = nature_metrics.get('nearest_distances', {}).get('park')
         if nearest_park and nearest_park <= 300:
-            score += 10
+            park_bonus = 10
         elif nearest_park and nearest_park <= 500:
-            score += 5
+            park_bonus = 5
+        else:
+            park_bonus = 0
+        components['park_proximity_bonus'] = park_bonus
+        components['nearest_park_m'] = nearest_park
+        score += park_bonus
         
         # Minusy: Transport (hałas uliczny)
         transport = pois_by_category.get('transport', [])
-        # Przystanki bardzo blisko (< 100m) generują duży hałas/ruch
         near_transport = [p for p in transport if p.distance_m and p.distance_m <= 100]
-        score -= min(30, len(near_transport) * 10)
+        transport_penalty = min(30, len(near_transport) * 10)
+        components['transport_penalty'] = -transport_penalty
+        components['near_transport_count'] = len(near_transport)
+        score -= transport_penalty
 
         # Minusy: Gastronomia (hałas wieczorny)
         food = pois_by_category.get('food', [])
         near_food = [p for p in food if p.distance_m and p.distance_m <= 50]
-        score -= min(20, len(near_food) * 10)
+        food_penalty = min(20, len(near_food) * 10)
+        components['food_penalty'] = -food_penalty
+        components['near_food_count'] = len(near_food)
+        score -= food_penalty
         
         # Minusy: Duże sklepy/markety (ruch samochodowy/ludzi)
         shops = pois_by_category.get('shops', [])
         malls = [p for p in shops if p.subcategory in ['mall', 'supermarket']]
-        if any(p.distance_m and p.distance_m <= 150 for p in malls):
-            score -= 15
+        mall_penalty = 15 if any(p.distance_m and p.distance_m <= 150 for p in malls) else 0
+        nearest_mall = min((p.distance_m for p in malls if p.distance_m), default=None)
+        components['mall_penalty'] = -mall_penalty
+        components['nearest_mall_m'] = nearest_mall
+        score -= mall_penalty
 
         # Szkoły (hałas w ciągu dnia)
         education = pois_by_category.get('education', [])
         schools = [p for p in education if p.subcategory in ['school', 'kindergarten']]
-        if any(p.distance_m and p.distance_m <= 100 for p in schools):
-            score -= 10
+        school_penalty = 10 if any(p.distance_m and p.distance_m <= 100 for p in schools) else 0
+        nearest_school = min((p.distance_m for p in schools if p.distance_m), default=None)
+        components['school_penalty'] = -school_penalty
+        components['nearest_school_m'] = nearest_school
+        score -= school_penalty
 
         # Minusy: Ruch drogowy (autostrady, główne drogi, tory)
         roads = pois_by_category.get('roads', [])
         
         # Ciężki ruch (Autostrady, Ekspresówki) - bardzo głośno i daleko niesie
         heavy_traffic = [p for p in roads if p.subcategory in ['motorway', 'trunk']]
-        if any(p.distance_m and p.distance_m <= 300 for p in heavy_traffic):
-            score -= 40
-        elif any(p.distance_m and p.distance_m <= 600 for p in heavy_traffic):
-            score -= 20
+        nearest_heavy = min((p.distance_m for p in heavy_traffic if p.distance_m), default=None)
+        if nearest_heavy is not None and nearest_heavy <= 300:
+            heavy_penalty = 40
+        elif nearest_heavy is not None and nearest_heavy <= 600:
+            heavy_penalty = 20
+        else:
+            heavy_penalty = 0
+        components['heavy_traffic_penalty'] = -heavy_penalty
+        components['nearest_heavy_m'] = nearest_heavy
+        score -= heavy_penalty
             
         # Średni/Duży ruch (Główne drogi miejskie)
         primary = [p for p in roads if p.subcategory == 'primary']
-        if any(p.distance_m and p.distance_m <= 100 for p in primary):
-            score -= 30
-        elif any(p.distance_m and p.distance_m <= 250 for p in primary):
-            score -= 15
+        nearest_primary = min((p.distance_m for p in primary if p.distance_m), default=None)
+        if nearest_primary is not None and nearest_primary <= 100:
+            primary_penalty = 30
+        elif nearest_primary is not None and nearest_primary <= 250:
+            primary_penalty = 15
+        else:
+            primary_penalty = 0
+        components['primary_road_penalty'] = -primary_penalty
+        components['nearest_primary_m'] = nearest_primary
+        score -= primary_penalty
             
         # Minusy: Tory (Tramwaj, Kolej)
         rails = [p for p in roads if p.subcategory in ['tram', 'rail']]
-        if any(p.distance_m and p.distance_m <= 80 for p in rails):
-            score -= 15
+        nearest_rails = min((p.distance_m for p in rails if p.distance_m), default=None)
+        rails_penalty = 15 if (nearest_rails is not None and nearest_rails <= 80) else 0
+        components['rails_penalty'] = -rails_penalty
+        components['nearest_rails_m'] = nearest_rails
+        score -= rails_penalty
 
-        return max(0.0, min(100.0, score))
+        final = max(0.0, min(100.0, score))
+        components['final'] = final
+        return final, components
 
     def _analyze_traffic(self, pois_by_category: Dict[str, List[POI]]) -> Dict[str, Any]:
         """Analizuje poziom ruchu ulicznego."""

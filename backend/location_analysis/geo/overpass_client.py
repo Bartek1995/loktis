@@ -270,8 +270,10 @@ class OverpassClient:
             add('health', 1.0)
 
         public_transport = tags.get('public_transport')
-        if public_transport in ['stop_position', 'platform']:
+        if public_transport == 'platform':
             add('transport', 1.0)
+        elif public_transport == 'stop_position':
+            add('transport', 0.4)  # Geometry marker, not real passenger stop
 
         highway = tags.get('highway')
         if highway == 'bus_stop':
@@ -556,7 +558,50 @@ class OverpassClient:
         # 4. Oblicz density proxy
         nature_metrics.calculate_density(radius_m)
         
-        # 5. Sortuj i limituj wynikowe listy
+        # 5. Transport: proximity dedup — prefer platform/bus_stop over stop_position
+        transport_pois = pois_by_category.get('transport', [])
+        if transport_pois:
+            PROPER_STOP_SUBS = {'bus_stop', 'tram_stop', 'station', 'platform'}
+            proper_stops = [p for p in transport_pois if p.subcategory in PROPER_STOP_SUBS]
+            cleaned = []
+            for poi in transport_pois:
+                if poi.subcategory == 'stop_position':
+                    # Drop if a proper stop exists within 30m
+                    dominated = any(
+                        abs(poi.distance_m - ps.distance_m) < 30
+                        and abs(poi.lat - ps.lat) < 0.0003
+                        and abs(poi.lon - ps.lon) < 0.0003
+                        for ps in proper_stops
+                    )
+                    if dominated:
+                        continue
+                cleaned.append(poi)
+            pois_by_category['transport'] = cleaned
+        
+        # 6. General proximity dedup: same name + same subcategory within 20m → keep closest
+        for cat in pois_by_category:
+            items = pois_by_category[cat]
+            if len(items) <= 1:
+                continue
+            deduped = []
+            for poi in items:
+                is_dup = False
+                name_lower = (poi.name or '').lower()
+                if name_lower and name_lower != 'bez nazwy':
+                    for kept in deduped:
+                        kept_name = (kept.name or '').lower()
+                        if (name_lower == kept_name
+                            and poi.subcategory == kept.subcategory
+                            and abs((poi.distance_m or 0) - (kept.distance_m or 0)) < 20
+                            and abs(poi.lat - kept.lat) < 0.0002
+                            and abs(poi.lon - kept.lon) < 0.0002):
+                            is_dup = True
+                            break
+                if not is_dup:
+                    deduped.append(poi)
+            pois_by_category[cat] = deduped
+        
+        # 7. Sortuj i limituj wynikowe listy
         for cat in pois_by_category:
             pois_by_category[cat].sort(key=lambda p: p.distance_m)
             pois_by_category[cat] = pois_by_category[cat][:MAX_POIS_PER_CATEGORY]

@@ -387,6 +387,8 @@ class AnalysisService:
             from datetime import datetime
             report.generation_params = {
                 'generated_at': datetime.now().isoformat(),
+                'scoring_version': '2.1',
+                'profile_version': getattr(profile, 'version', 1),
                 'profile': {
                     'key': effective_profile_key,
                     'name': profile.name,

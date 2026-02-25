@@ -49,6 +49,9 @@ class CategoryScoreResult:
     radius_used: int = 0
     contributions: List[POIContribution] = field(default_factory=list)
     is_critical: bool = False
+    critical_threshold: Optional[float] = None
+    critical_cap: Optional[float] = None
+    critical_reason: str = ""
     
     def to_dict(self) -> dict:
         return {
@@ -61,6 +64,9 @@ class CategoryScoreResult:
             'poi_count': self.poi_count,
             'radius_used': self.radius_used,
             'is_critical': self.is_critical,
+            'critical_threshold': self.critical_threshold,
+            'critical_cap': self.critical_cap,
+            'critical_reason': self.critical_reason,
             'top_pois': [
                 {
                     'name': c.name,
@@ -238,10 +244,18 @@ class ProfileScoringEngine:
                 nature_metrics=nature_metrics if category == Category.NATURE_BACKGROUND.value else None,
             )
             
-            # Sprawdź czy kategoria jest krytyczna
-            result.is_critical = any(
-                cat == category for cat, _ in self.profile.critical_caps
-            )
+            # Sprawdź czy kategoria jest krytyczna + dodaj reason
+            result.is_critical = False
+            for cap_cat, cap_config in self.profile.critical_caps:
+                if cap_cat == category:
+                    result.is_critical = True
+                    result.critical_threshold = cap_config.threshold
+                    result.critical_cap = cap_config.cap
+                    result.critical_reason = (
+                        f"weight≥{self.profile.get_weight(category):.0%}, "
+                        f"score<{cap_config.threshold}→cap {cap_config.cap}"
+                    )
+                    break
             
             category_results[category] = result
             category_scores[category] = result.score
